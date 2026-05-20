@@ -17,13 +17,15 @@ mdns-sd = { workspace = true }
 async-trait = "0.1"
 
 # Reutilizamos el sender AirPlay 2 alpha de lmcgartland/airplay2-rs (GPL-2.0).
-# Commit fijado para builds reproducibles. Renombramos los paquetes para no
-# colisionar con nuestro crate local (también llamado airplay-core en el
-# repositorio upstream).
-ap2rs-pairing = { package = "airplay-pairing", git = "https://github.com/lmcgartland/airplay2-rs", rev = "a7f019fe6246ebd9701201a8a5c31e9a15243956" }
-ap2rs-core = { package = "airplay-core", git = "https://github.com/lmcgartland/airplay2-rs", rev = "a7f019fe6246ebd9701201a8a5c31e9a15243956" }
-ap2rs-client = { package = "airplay-client", git = "https://github.com/lmcgartland/airplay2-rs", rev = "a7f019fe6246ebd9701201a8a5c31e9a15243956" }
-ap2rs-audio = { package = "airplay-audio", git = "https://github.com/lmcgartland/airplay2-rs", rev = "a7f019fe6246ebd9701201a8a5c31e9a15243956" }
+# Apuntamos a nuestro fork `Pabldi08/airplay2-rs` con un parche mínimo
+# (`set_socket_qos` gated detrás de `#[cfg(unix)]`, stub en Windows) porque el
+# upstream no compila en MSVC tal cual. Resto sin cambios. Pendiente PR upstream.
+# Renombramos los paquetes para no colisionar con nuestro crate local (también
+# llamado airplay-core en el repo upstream).
+ap2rs-pairing = { package = "airplay-pairing", git = "https://github.com/Pabldi08/airplay2-rs", rev = "d8125d42d7f042f6cceb214ad8cae11693cc7b23" }
+ap2rs-core = { package = "airplay-core", git = "https://github.com/Pabldi08/airplay2-rs", rev = "d8125d42d7f042f6cceb214ad8cae11693cc7b23" }
+ap2rs-client = { package = "airplay-client", git = "https://github.com/Pabldi08/airplay2-rs", rev = "d8125d42d7f042f6cceb214ad8cae11693cc7b23" }
+ap2rs-audio = { package = "airplay-audio", git = "https://github.com/Pabldi08/airplay2-rs", rev = "d8125d42d7f042f6cceb214ad8cae11693cc7b23" }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
