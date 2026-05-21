@@ -47,7 +47,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "ConexionAirPlay ${{ github.ref_name }}"
+          releaseName: "AirSend ${{ github.ref_name }}"
           releaseBody: |
             Cambios desde la versión anterior:
             - (autogenerar con git log en futuras releases)

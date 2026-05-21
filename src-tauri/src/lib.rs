@@ -501,7 +501,7 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         .build()?;
 
     let mut builder = TrayIconBuilder::with_id("main")
-        .tooltip("ConexionAirPlay")
+        .tooltip("AirSend")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => toggle_main_window(app),
