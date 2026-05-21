@@ -25,6 +25,32 @@ const KIND_LABEL: Record<DeviceKind, string> = {
 const devicesList = document.getElementById("devices") as HTMLUListElement;
 const scanBtn = document.getElementById("scan") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLSpanElement;
+const toastEl = document.getElementById("toast") as HTMLDivElement;
+
+let toastTimer: number | null = null;
+function showToast(msg: string, durationMs = 5000) {
+  toastEl.textContent = msg;
+  toastEl.hidden = false;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    toastEl.hidden = true;
+    toastTimer = null;
+  }, durationMs);
+}
+
+// Errores asíncronos del backend (pump muriendo, heartbeat fallando reiteradamente).
+// Los errores síncronos de invoke se siguen mostrando junto a su botón asociado.
+// La función se llama al final del archivo, una vez declarados `playing` y demás.
+function setupAsyncErrorListener() {
+  void listen<string>("airplay://error", (event) => {
+    showToast(event.payload);
+    if (playing) {
+      playing = false;
+      playerStatus.textContent = `error: ${event.payload}`;
+      updatePlayerUi();
+    }
+  });
+}
 
 const known = new Map<string, Device>();
 let unlisten: UnlistenFn | null = null;
@@ -260,4 +286,5 @@ manualIpInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") void addManual();
 });
 
+setupAsyncErrorListener();
 void startScan();

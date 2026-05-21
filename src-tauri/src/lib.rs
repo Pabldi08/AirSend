@@ -119,6 +119,7 @@ struct StreamingInfo {
 /// Si había un streaming activo, lo para antes de abrir el nuevo.
 #[tauri::command]
 async fn start_streaming(
+    app: tauri::AppHandle,
     ip: String,
     port: Option<u16>,
     name: Option<String>,
@@ -160,12 +161,15 @@ async fn start_streaming(
         .map_err(|e| format!("stream: {e}"))?;
     let (sender, connection, heartbeat, sample_rate, channels) = stream_handle.into_parts();
 
-    // Hilo bombeador.
+    // Hilo bombeador. Le pasamos un clone del AppHandle para que pueda emitir
+    // `airplay://error` si la captura muere inesperadamente (device removed,
+    // parec/wasapi cierra el canal, etc.) — la UI lo escucha y muestra toast.
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
+    let app_pump = app.clone();
     let pump = std::thread::Builder::new()
         .name("airplay-pump".into())
-        .spawn(move || pump_loop(rx, sender, sample_rate, channels, stop_thread))
+        .spawn(move || pump_loop(app_pump, rx, sender, sample_rate, channels, stop_thread))
         .map_err(|e| format!("pump thread: {e}"))?;
 
     let active = ActiveStream {
@@ -193,6 +197,7 @@ async fn start_streaming(
 }
 
 fn pump_loop(
+    app: tauri::AppHandle,
     rx: crossbeam_channel::Receiver<audio_capture::CapturedFrame>,
     sender: cap_core::streaming::LiveFrameSender,
     sample_rate: u32,
@@ -203,6 +208,7 @@ fn pump_loop(
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
+    let mut unexpected_exit = false;
     while !stop.load(Ordering::SeqCst) {
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(frame) => {
@@ -213,10 +219,23 @@ fn pump_loop(
                 });
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-            Err(_) => break,
+            Err(_) => {
+                // El canal de captura se cerró sin que nosotros pidamos shutdown:
+                // device removed, driver crash, parec mató al subproceso, etc.
+                unexpected_exit = true;
+                break;
+            }
         }
     }
-    tracing::info!("airplay-pump thread exit");
+    if unexpected_exit {
+        tracing::warn!("airplay-pump: canal captura cerrado inesperadamente, emitiendo error");
+        let _ = app.emit(
+            "airplay://error",
+            "captura del audio interrumpida (dispositivo desconectado o driver caído)",
+        );
+    } else {
+        tracing::info!("airplay-pump thread exit");
+    }
 }
 
 #[tauri::command]
@@ -349,13 +368,91 @@ async fn add_manual_device(
     Ok(device)
 }
 
+/// Localización de los logs por plataforma. Windows usa %APPDATA% (igual que
+/// hace Tauri por defecto para `app_log_dir` con el bundle id de la app).
+/// Si no se puede resolver, devolvemos None y los logs quedan solo en stdout.
+fn resolve_log_dir() -> Option<std::path::PathBuf> {
+    const APP_DIRNAME: &str = "ConexionAirPlay";
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os("APPDATA")?;
+        Some(std::path::PathBuf::from(base).join(APP_DIRNAME).join("logs"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")?;
+        Some(
+            std::path::PathBuf::from(home)
+                .join("Library")
+                .join("Logs")
+                .join(APP_DIRNAME),
+        )
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        if let Some(xdg) = std::env::var_os("XDG_STATE_HOME") {
+            return Some(std::path::PathBuf::from(xdg).join(APP_DIRNAME).join("logs"));
+        }
+        let home = std::env::var_os("HOME")?;
+        Some(
+            std::path::PathBuf::from(home)
+                .join(".local")
+                .join("state")
+                .join(APP_DIRNAME)
+                .join("logs"),
+        )
+    }
+}
+
+/// Configura `tracing`: stdout siempre + archivo rotado por día si el directorio
+/// de logs es resoluble y escribible. Devuelve el `WorkerGuard` que mantiene
+/// vivo el writer non-blocking (se debe retener todo el lifetime del programa;
+/// si se dropea, los logs pendientes se pierden).
+fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::Layer;
+
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_target(true)
+        .with_ansi(true);
+
+    let (file_layer, guard) = match resolve_log_dir() {
+        Some(dir) => match std::fs::create_dir_all(&dir) {
+            Ok(()) => {
+                let appender = tracing_appender::rolling::daily(&dir, "app.log");
+                let (writer, guard) = tracing_appender::non_blocking(appender);
+                let layer = tracing_subscriber::fmt::layer()
+                    .with_writer(writer)
+                    .with_ansi(false)
+                    .with_target(true);
+                eprintln!("→ logs a {}", dir.display());
+                (Some(layer), Some(guard))
+            }
+            Err(e) => {
+                eprintln!("→ no pude crear dir de logs {}: {e}", dir.display());
+                (None, None)
+            }
+        },
+        None => (None, None),
+    };
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(stdout_layer)
+        .with(file_layer.map(|l| l.boxed()))
+        .init();
+
+    guard
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    // `_log_guard` debe vivir todo el programa para que el writer non-blocking
+    // siga drenando logs al archivo. Lo "olvidamos" con un binding mut a static.
+    let _log_guard = init_tracing();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -382,4 +479,7 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    // `_log_guard` se dropea aquí al salir, drenando los últimos logs.
+    drop(_log_guard);
 }
