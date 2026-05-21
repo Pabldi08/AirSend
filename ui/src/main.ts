@@ -295,7 +295,7 @@ manualIpInput.addEventListener("keydown", (e) => {
 
 setupAsyncErrorListener();
 void preloadSavedVolume();
-void startScan();
+void bootstrap();
 
 async function preloadSavedVolume() {
   try {
@@ -308,4 +308,73 @@ async function preloadSavedVolume() {
   } catch {
     // sin volumen guardado todavía, se queda el default del HTML.
   }
+}
+
+interface PersistedDevice {
+  ip: string;
+  port: number;
+  name: string;
+}
+
+/// Bootstrap: arranca discovery y, si hay un último HomePod guardado, intenta
+/// reconectarse a él automáticamente (C2). Si mDNS lo descubre en <RECONNECT_TIMEOUT_MS,
+/// streamea directo. Si no, prueba añadirlo manualmente por la IP que tenemos
+/// guardada (típico en routers Movistar HGU donde mDNS no se propaga).
+const RECONNECT_TIMEOUT_MS = 6000;
+
+async function bootstrap() {
+  // Lanzamos el discovery en paralelo a la lectura de la store: la mayor parte
+  // del tiempo el HomePod ya estará en `known` antes de que el promise de la
+  // store resuelva.
+  void startScan();
+
+  let last: PersistedDevice | null = null;
+  try {
+    last = await invoke<PersistedDevice | null>("get_last_device");
+  } catch {
+    last = null;
+  }
+  if (!last) return;
+
+  statusEl.textContent = `reconectando a ${last.name}…`;
+
+  const matchByIp = (): Device | null => {
+    for (const d of known.values()) {
+      if (d.addresses.some((a) => a === last!.ip)) return d;
+    }
+    return null;
+  };
+
+  // Esperar hasta RECONNECT_TIMEOUT_MS a que mDNS lo encuentre.
+  const deadline = Date.now() + RECONNECT_TIMEOUT_MS;
+  let found = matchByIp();
+  while (!found && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 250));
+    found = matchByIp();
+  }
+
+  if (!found) {
+    // Fallback: probe manual al puerto 7000 y, si responde, lo añadimos a la
+    // lista (mismo flujo que el botón "Añadir" de la sección manual).
+    try {
+      const dev = await invoke<Device>("add_manual_device", {
+        ip: last.ip,
+        port: last.port,
+        name: last.name,
+      });
+      known.set(dev.id, dev);
+      found = dev;
+      render();
+    } catch (err) {
+      showToast(`no encuentro ${last.name}: ${String(err)}`, 6000);
+      return;
+    }
+  }
+
+  // Tenemos el device. Saltamos `connect_device` (que haría pair-setup adicional
+  // sin uso real) y vamos directo a streaming, marcando connectedId para que
+  // startPlay y el resto de la UI lo traten como activo.
+  connectedId = found.id;
+  render();
+  await startPlay();
 }
