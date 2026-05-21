@@ -8,7 +8,9 @@ use cap_core::{
     probe::manual_device,
     probe_airplay, Device, Discovery,
 };
-use tauri::{Emitter, State};
+use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::{Emitter, Manager, State, WindowEvent};
 use tauri_plugin_store::StoreExt;
 use tracing_subscriber::EnvFilter;
 
@@ -448,6 +450,58 @@ fn get_volume(app: tauri::AppHandle) -> Result<Option<f32>, String> {
     }
 }
 
+// ── System tray (C3) ─────────────────────────────────────────────────────────
+//
+// La app vive en bandeja del sistema. Cerrar la ventana la oculta pero el
+// proceso sigue (streaming continúa). Sólo "Salir" del menú o un kill mata el
+// daemon. Esto es lo esperado para una app de tipo "siempre disponible".
+
+fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    let show_item = MenuItemBuilder::with_id("show", "Mostrar / ocultar ventana").build(app)?;
+    let quit_item = MenuItemBuilder::with_id("quit", "Salir").build(app)?;
+    let menu = MenuBuilder::new(app)
+        .item(&show_item)
+        .separator()
+        .item(&quit_item)
+        .build()?;
+
+    let mut builder = TrayIconBuilder::with_id("main")
+        .tooltip("ConexionAirPlay")
+        .menu(&menu)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "show" => toggle_main_window(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            // Click izquierdo en el icono = toggle ventana, comportamiento
+            // típico de apps de tray en Windows.
+            if let TrayIconEvent::Click { button, .. } = event {
+                if matches!(button, tauri::tray::MouseButton::Left) {
+                    toggle_main_window(tray.app_handle());
+                }
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        builder = builder.icon(icon.clone());
+    }
+    builder.build(app)?;
+
+    Ok(())
+}
+
+fn toggle_main_window(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let visible = win.is_visible().unwrap_or(false);
+        if visible {
+            let _ = win.hide();
+        } else {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Localización de los logs por plataforma. Windows usa %APPDATA% (igual que
@@ -562,7 +616,22 @@ pub fn run() {
             get_volume,
         ])
         .setup(|app| {
-            let _ = app.handle();
+            setup_tray(app.handle())?;
+
+            // Cerrar la ventana (X) la oculta en vez de matar el proceso —
+            // la app sigue viva en el tray. "Salir" del menú del tray sí
+            // termina el proceso.
+            if let Some(win) = app.get_webview_window("main") {
+                let app_handle = app.handle().clone();
+                win.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        if let Some(w) = app_handle.get_webview_window("main") {
+                            let _ = w.hide();
+                        }
+                    }
+                });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
