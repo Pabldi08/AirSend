@@ -18,6 +18,55 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Historia completa + tags para que `git describe` y `git log RANGE`
+          # funcionen al generar las release notes contra el tag anterior.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Generate release notes
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)
+
+          if [ -n "${PREV_TAG}" ]; then
+            RANGE="${PREV_TAG}..${TAG}"
+            HEADER="Cambios desde ${PREV_TAG}:"
+          else
+            RANGE="${TAG}"
+            HEADER="Primera release:"
+          fi
+
+          # Excluimos los commits "release: bump version ..." porque aparecen
+          # en cada tag y no aportan nada al usuario. Filtramos por subject:
+          # `git log --grep` matchea contra el body completo, así que un commit
+          # con bump en el body se eliminaba aunque su subject fuese descriptivo.
+          CHANGES=$(
+            git log "${RANGE}" --no-merges --pretty=format:'%s' \
+              | grep -vE '^release: bump version' \
+              | sed 's/^/- /'
+          )
+          if [ -z "${CHANGES}" ]; then
+            CHANGES="- (sin cambios visibles)"
+          fi
+
+          {
+            echo "notes<<__NOTES_EOF__"
+            echo "${HEADER}"
+            echo
+            echo "${CHANGES}"
+            echo
+            echo "Instalación: descarga el \`.exe\` de NSIS y ejecútalo."
+            echo "SmartScreen puede avisar la primera vez (no firmamos aún"
+            echo "con cert EV) → \"Más información\" → \"Ejecutar igualmente\"."
+            echo
+            echo "Auto-update: al instalar v0.1.0 o superior, la app se"
+            echo "actualizará sola en futuros lanzamientos."
+            echo "__NOTES_EOF__"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -48,16 +97,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "AirSend ${{ github.ref_name }}"
-          releaseBody: |
-            Cambios desde la versión anterior:
-            - (autogenerar con git log en futuras releases)
-
-            Instalación: descarga el `.exe` de NSIS y ejecútalo. SmartScreen
-            puede avisar la primera vez (no firmamos aún con cert EV) → "Más
-            información" → "Ejecutar igualmente".
-
-            Auto-update: al instalar v0.1.0 o superior, la app se actualizará
-            sola en futuros lanzamientos.
+          releaseBody: ${{ steps.notes.outputs.notes }}
           releaseDraft: true   # publicamos a mano tras QA
           prerelease: false
           # NB: dejamos el args vacío → cargo tauri build target msvc por defecto.
