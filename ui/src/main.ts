@@ -81,6 +81,8 @@ async function connect(device: Device) {
       ip,
       port: device.port,
       name: device.name,
+      model: device.model,
+      features: device.features,
     });
     connectedId = device.id;
   } catch (err) {
@@ -137,6 +139,8 @@ async function startPlay() {
       port: dev.port,
       name: dev.name,
       volume: vol,
+      model: dev.model,
+      features: dev.features,
     });
     playing = true;
     playerStatus.textContent = t("player_playing");

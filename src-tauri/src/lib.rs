@@ -170,6 +170,8 @@ async fn start_streaming(
     port: Option<u16>,
     name: Option<String>,
     volume: Option<f32>,
+    model: Option<String>,
+    features: Option<String>,
     state: State<'_, StreamingState>,
 ) -> Result<StreamingInfo, String> {
     use audio_capture::CaptureFormat;
@@ -199,8 +201,8 @@ async fn start_streaming(
         port,
         name: display_name.clone(),
         mac: None,
-        model: None,
-        features: None,
+        model,
+        features,
     };
     let stream_handle = open_live_stream(descriptor, volume)
         .await
@@ -334,6 +336,8 @@ async fn connect_device(
     ip: String,
     port: Option<u16>,
     name: Option<String>,
+    model: Option<String>,
+    features: Option<String>,
     state: State<'_, ConnectionState>,
 ) -> Result<ConnectionInfo, String> {
     let parsed: IpAddr = ip.parse().map_err(|e| format!("IP inválida '{ip}': {e}"))?;
@@ -345,8 +349,8 @@ async fn connect_device(
         port,
         name: display_name.clone(),
         mac: None,
-        model: None,
-        features: None,
+        model,
+        features,
     };
 
     // Si ya había una sesión previa, la soltamos antes de abrir otra.
