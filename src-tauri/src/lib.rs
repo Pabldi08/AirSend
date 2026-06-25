@@ -20,6 +20,7 @@ use tracing_subscriber::EnvFilter;
 const STORE_FILE: &str = "settings.json";
 const KEY_LAST_DEVICE: &str = "last_device";
 const KEY_VOLUME: &str = "volume";
+const KEY_LATENCY: &str = "latency";
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct LastDevice {
@@ -170,6 +171,7 @@ async fn start_streaming(
     port: Option<u16>,
     name: Option<String>,
     volume: Option<f32>,
+    latency: Option<cap_core::streaming::LatencyProfile>,
     state: State<'_, StreamingState>,
 ) -> Result<StreamingInfo, String> {
     use audio_capture::CaptureFormat;
@@ -202,7 +204,7 @@ async fn start_streaming(
         model: None,
         features: None,
     };
-    let stream_handle = open_live_stream(descriptor, volume)
+    let stream_handle = open_live_stream(descriptor, volume, latency)
         .await
         .map_err(|e| format!("stream: {e}"))?;
     let (sender, connection, heartbeat, sample_rate, channels) = stream_handle.into_parts();
@@ -485,6 +487,34 @@ fn get_volume(app: tauri::AppHandle) -> Result<Option<f32>, String> {
     }
 }
 
+#[tauri::command]
+fn save_latency(
+    app: tauri::AppHandle,
+    latency: cap_core::streaming::LatencyProfile,
+) -> Result<(), String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(
+        KEY_LATENCY,
+        serde_json::to_value(latency).map_err(|e| e.to_string())?,
+    );
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_latency(
+    app: tauri::AppHandle,
+) -> Result<Option<cap_core::streaming::LatencyProfile>, String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    let value = store.get(KEY_LATENCY);
+    match value {
+        // Un valor corrupto/desconocido no debe romper el arranque: lo tratamos
+        // como "sin preferencia" y la UI cae al default (`music`).
+        Some(v) => Ok(serde_json::from_value(v).ok()),
+        None => Ok(None),
+    }
+}
+
 // ── System tray (C3) ─────────────────────────────────────────────────────────
 //
 // La app vive en bandeja del sistema. Cerrar la ventana la oculta pero el
@@ -740,6 +770,8 @@ pub fn run() {
             clear_last_device,
             save_volume,
             get_volume,
+            save_latency,
+            get_latency,
         ])
         .setup(|app| {
             setup_tray(app.handle())?;

@@ -17,6 +17,12 @@ const ES: Dict = {
   player_starting: "iniciando…",
   player_playing: "reproduciendo",
   volume: "Volumen",
+  latency: "Latencia",
+  latency_music: "Música (segura)",
+  latency_video: "Vídeo",
+  latency_gaming: "Juegos (mínima)",
+  latency_hint:
+    "Menos latencia es más reactivo, pero sobre Wi-Fi flojo el audio puede entrecortarse. Si oyes cortes, sube a Música.",
   manual_summary: "¿No aparece tu HomePod? Añade su IP manualmente",
   manual_hint:
     "Algunos routers (Movistar HGU, redes con VLANs) no propagan mDNS entre wifi 2.4 y 5 GHz. Mira la IP del HomePod en la app Casa del iPhone.",
@@ -49,6 +55,12 @@ const EN: Dict = {
   player_starting: "starting…",
   player_playing: "playing",
   volume: "Volume",
+  latency: "Latency",
+  latency_music: "Music (safe)",
+  latency_video: "Video",
+  latency_gaming: "Gaming (lowest)",
+  latency_hint:
+    "Lower latency is more responsive, but on weak Wi-Fi the audio may stutter. If you hear drops, switch back to Music.",
   manual_summary: "Can't see your HomePod? Add its IP manually",
   manual_hint:
     "Some routers (Movistar HGU, VLAN-segmented networks) don't propagate mDNS between 2.4 and 5 GHz Wi-Fi. Check the HomePod's IP in the iPhone Home app.",

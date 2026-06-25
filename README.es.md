@@ -61,6 +61,7 @@ El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta 
 - [x] Añadir dispositivo por IP manual (redes con mDNS roto: Movistar HGU, VLANs)
 - [x] Reconexión automática al último dispositivo al arrancar
 - [x] Control de volumen persistente entre sesiones
+- [x] Perfiles de latencia seleccionables (Música / Vídeo / Gaming), persistentes entre sesiones
 - [x] Bandeja del sistema + cerrar al tray (la app sigue activa de fondo)
 - [x] Logs rotados por día + toast de errores en la UI
 - [x] Auto-update firmado con minisign vía GitHub Releases
@@ -78,7 +79,6 @@ El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta 
 
 - [ ] Multi-destino simultáneo (group streaming a varios HomePods)
 - [ ] Selección de audio por aplicación (WASAPI process-loopback, Win10 1903+)
-- [ ] Perfiles de latencia preconfigurados (Música / Vídeo / Gaming)
 - [ ] PR upstream a `lmcgartland/airplay2-rs` con los dos patches Windows
 - [ ] Soporte estable para otros receptores AirPlay 2 (Apple TV, AirPort Express, altavoces de terceros)
 

@@ -70,6 +70,7 @@ AirPlay-compatible devices.
 - [x] Add device by manual IP (networks with broken mDNS: Movistar HGU routers, VLANs)
 - [x] Auto-reconnect to the last device on startup
 - [x] Persistent volume across sessions
+- [x] Selectable latency profiles (Music / Video / Gaming), persisted across sessions
 - [x] System tray + close-to-tray (app keeps running in the background)
 - [x] Daily-rotated log files + UI toast for async errors
 - [x] Signed auto-update via minisign + GitHub Releases
@@ -87,7 +88,6 @@ AirPlay-compatible devices.
 
 - [ ] Simultaneous multi-target (group streaming to multiple HomePods)
 - [ ] Per-application audio capture (WASAPI process-loopback, Win10 1903+)
-- [ ] Preset latency profiles (Music / Video / Gaming)
 - [ ] Upstream PR to `lmcgartland/airplay2-rs` with the two Windows patches
 - [ ] Stable support for other AirPlay 2 receivers (Apple TV, AirPort Express, third-party speakers)
 

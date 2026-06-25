@@ -106,6 +106,7 @@ const playBtn = document.getElementById("play-stop") as HTMLButtonElement;
 const playerStatus = document.getElementById("player-status") as HTMLSpanElement;
 const volumeSlider = document.getElementById("volume") as HTMLInputElement;
 const volumeOut = document.getElementById("vol-out") as HTMLOutputElement;
+const latencySelect = document.getElementById("latency") as HTMLSelectElement;
 
 let playing = false;
 let volumeDebounce: number | null = null;
@@ -132,17 +133,20 @@ async function startPlay() {
   playerStatus.textContent = t("player_starting");
   try {
     const vol = Number(volumeSlider.value) / 100;
+    const latency = latencySelect.value;
     await invoke("start_streaming", {
       ip,
       port: dev.port,
       name: dev.name,
       volume: vol,
+      latency,
     });
     playing = true;
     playerStatus.textContent = t("player_playing");
     // Persistimos para auto-reconnect (C2) y carga rápida en futuros arranques.
     void invoke("save_last_device", { ip, port: dev.port, name: dev.name });
     void invoke("save_volume", { volume: vol });
+    void invoke("save_latency", { latency });
   } catch (err) {
     playerStatus.textContent = t("error_prefix", { err: String(err) });
   } finally {
@@ -183,6 +187,15 @@ volumeSlider.addEventListener("input", () => {
       playerStatus.textContent = t("vol_error_prefix", { err: String(err) });
     }
   }, 120);
+});
+
+latencySelect.addEventListener("change", () => {
+  const latency = latencySelect.value;
+  // Persistimos siempre para recordar la preferencia en el próximo arranque.
+  void invoke("save_latency", { latency });
+  // La latencia se negocia con el HomePod al abrir el stream, así que un cambio
+  // en caliente no surte efecto hasta el próximo Play. Avisamos al usuario.
+  if (playing) showToast(t("latency_hint"));
 });
 
 function render() {
@@ -306,6 +319,7 @@ manualIpInput.addEventListener("keydown", (e) => {
 setupAsyncErrorListener();
 setupLangToggle();
 void preloadSavedVolume();
+void preloadSavedLatency();
 void bootstrap();
 
 function setupLangToggle() {
@@ -340,6 +354,17 @@ async function preloadSavedVolume() {
     }
   } catch {
     // sin volumen guardado todavía, se queda el default del HTML.
+  }
+}
+
+async function preloadSavedLatency() {
+  try {
+    const v = await invoke<string | null>("get_latency");
+    if (v === "music" || v === "video" || v === "gaming") {
+      latencySelect.value = v;
+    }
+  } catch {
+    // sin preferencia guardada, se queda el default del HTML ("music").
   }
 }
 

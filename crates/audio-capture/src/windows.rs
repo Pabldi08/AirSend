@@ -28,10 +28,15 @@ use wasapi::{
 
 use crate::{Capture, CaptureError, CaptureFormat, CapturedFrame};
 
-/// Frames por chunk entregado aguas arriba. 1024 frames @ 44.1k = ~23 ms,
-/// alineado con lo que produce `parec` en Linux para que el resto del pipeline
-/// (cap-core / streamer ALAC) vea el mismo tamaño de chunk en ambos OS.
-const CHUNK_FRAMES: usize = 1024;
+/// Frames por chunk entregado aguas arriba. 352 frames @ 44.1k = ~8 ms,
+/// exactamente un paquete RTP/ALAC (`frames_per_packet = 352`). Alinear el
+/// chunk al tamaño de paquete del encoder hace que cada chunk se mapee 1:1 a un
+/// paquete enviado: pacing regular hacia la red en vez de dejar restos (512
+/// dejaba 160 frames colgando por chunk, jitter que vacía el buffer del
+/// receptor y "robotiza"). Antes 512 (~11 ms) y 1024 (~23 ms) antes aún; cada
+/// bajada recorta latencia de captura. Igualado con `READ_CHUNK_FRAMES` del
+/// backend `parec` para que el pipeline vea el mismo tamaño en ambos OS.
+const CHUNK_FRAMES: usize = 352;
 
 /// Timeout del `wait_for_event` (ms). Si Windows deja de enviar eventos
 /// durante este tiempo, salimos del loop con error (driver colgado, audio

@@ -42,9 +42,40 @@ pub enum StreamError {
     Encoder(String),
 }
 
+/// Perfil de latencia: define el rango (`latency_min`/`latency_max`) con el que
+/// el HomePod dimensiona su buffer de recepción. Menos latencia = más reactivo
+/// pero más sensible a hipos de Wi-Fi: si el buffer del receptor se vacía, el
+/// audio "se robotiza" (repite el último paquete) aunque nuestro sender vaya a
+/// cero drops. `Music` es el rango seguro probado; `Video`/`Gaming` bajan el
+/// suelo para quien tenga buena red y quiera menos retardo. El usuario elige el
+/// perfil en la UI y se persiste como el volumen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LatencyProfile {
+    /// ~500 ms – 3 s. Seguro sobre Wi-Fi normal. Default.
+    #[default]
+    Music,
+    /// ~350 ms – 2 s. Menos retardo para vídeo; necesita red estable.
+    Video,
+    /// ~250 ms – 1 s. Mínimo retardo; sólo redes buenas, puede robotizar.
+    Gaming,
+}
+
+impl LatencyProfile {
+    /// `(latency_min, latency_max)` en frames @ 44.1 kHz.
+    fn frames(self) -> (u32, u32) {
+        match self {
+            LatencyProfile::Music => (22_050, 132_300), // ~500 ms – 3 s
+            LatencyProfile::Video => (15_435, 88_200),  // ~350 ms – 2 s
+            LatencyProfile::Gaming => (11_025, 44_100), // ~250 ms – 1 s
+        }
+    }
+}
+
 /// Configuración usada para abrir el stream. Para Hito 4a fijamos ALAC 44.1k/16/2,
-/// timing NTP. Tono o captura, el formato es el mismo.
-fn streaming_stream_config() -> Result<StreamConfig, StreamError> {
+/// timing NTP. Tono o captura, el formato es el mismo. `profile` decide el rango
+/// de latencia que negociamos con el HomePod.
+fn streaming_stream_config(profile: LatencyProfile) -> Result<StreamConfig, StreamError> {
     let audio_format = AudioFormat {
         codec: AudioCodec::Alac,
         sample_rate: ap2rs_core::codec::SampleRate::Hz44100,
@@ -63,18 +94,19 @@ fn streaming_stream_config() -> Result<StreamConfig, StreamError> {
     // El HomePod elige dentro del rango según condiciones de red. Probado:
     // 100–500 ms es demasiado ajustado sobre Wi-Fi — cualquier hipo vacía el
     // buffer del receptor y el audio "se robotiza" (repite paquete) aunque
-    // nuestro sender vaya a cero drops. Usamos los mismos valores que el test
-    // upstream de live capture (`airplay-client/.../tests/...`) que sí es
-    // estable: 500 ms mínimo, 3 s máximo. Para música en streaming la latencia
-    // adicional es imperceptible.
+    // nuestro sender vaya a cero drops. El default (`Music`) usa los mismos
+    // valores que el test upstream de live capture (500 ms / 3 s), estable.
+    // `Video`/`Gaming` bajan el suelo para quien quiera menos retardo y tenga
+    // red buena; el `LatencyProfile` documenta el riesgo.
     // `ptp_mode` es ignorado por upstream cuando `timing_protocol == Ntp`.
+    let (latency_min, latency_max) = profile.frames();
     Ok(StreamConfig {
         stream_type: StreamType::Realtime,
         audio_format,
         timing_protocol: TimingProtocol::Ntp,
         ptp_mode: PtpMode::Master,
-        latency_min: 22_050,   // ~500 ms
-        latency_max: 132_300,  // ~3 s
+        latency_min,
+        latency_max,
         supports_dynamic_stream_id: true,
         asc: Some(asc),
     })
@@ -171,13 +203,15 @@ impl StreamHandle {
 }
 
 /// Abre un stream de audio en vivo al HomePod: pair-setup + setup() + start_streaming_live().
-/// Si `initial_volume` es `None`, usa `DEFAULT_INITIAL_VOLUME` (bajo).
+/// Si `initial_volume` es `None`, usa `DEFAULT_INITIAL_VOLUME` (bajo). Si
+/// `latency` es `None`, usa el perfil por defecto (`LatencyProfile::Music`).
 pub async fn open_live_stream(
     descriptor: DeviceDescriptor,
     initial_volume: Option<f32>,
+    latency: Option<LatencyProfile>,
 ) -> Result<StreamHandle, StreamError> {
     let device = build_device(&descriptor)?;
-    let config = streaming_stream_config()?;
+    let config = streaming_stream_config(latency.unwrap_or_default())?;
     let sample_rate = config.audio_format.sample_rate.as_hz();
     let channels = config.audio_format.channels;
 

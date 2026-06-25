@@ -20,7 +20,15 @@ use crossbeam_channel::{bounded, Receiver};
 
 use crate::{Capture, CaptureError, CaptureFormat, CapturedFrame};
 
-const READ_CHUNK_FRAMES: usize = 1024;
+// 352 frames @ 44.1k = ~8 ms por chunk, exactamente un paquete RTP/ALAC
+// (`frames_per_packet = 352`). Alinear la captura al tamaño de paquete del
+// encoder hace que cada chunk capturado se mapee 1:1 a un paquete enviado: el
+// ritmo de salida a la red es regular en vez de arrastrar restos. Antes 512 →
+// el encoder troceaba a 352 y dejaba 160 frames colgando, con jitter de pacing
+// que vacía el buffer del receptor y "robotiza". También recorta ~3.6 ms de
+// latencia de captura. Igualado con `CHUNK_FRAMES` del backend WASAPI para que
+// el pipeline vea el mismo tamaño en ambos OS.
+const READ_CHUNK_FRAMES: usize = 352;
 
 pub struct ParecCapture {
     name: String,
@@ -115,20 +123,30 @@ pub fn start(
     let handle = thread::Builder::new()
         .name("audio-capture-parec".into())
         .spawn(move || {
-            let bytes_per_frame = 2 * 2usize; // i16 * 2 channels
-            let chunk_bytes = READ_CHUNK_FRAMES * bytes_per_frame;
+            const BYTES_PER_FRAME: usize = 2 * 2; // i16 * 2 canales
+            let chunk_bytes = READ_CHUNK_FRAMES * BYTES_PER_FRAME;
             let mut buf = vec![0u8; chunk_bytes];
+            // Acumulador para arrastrar los bytes de un frame que el pipe haya
+            // partido entre dos lecturas. Sin esto, una lectura no alineada a
+            // frame (4 bytes) perdería parte de un sample y desincronizaría L/R
+            // de forma permanente — se oye como clicks. Sólo retiene < 1 frame.
+            let mut acc: Vec<u8> = Vec::with_capacity(chunk_bytes + BYTES_PER_FRAME);
             while running_thread.load(Ordering::SeqCst) {
                 match stdout.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        // Convertimos los bytes leídos a Vec<i16> sin asumir múltiplo exacto
-                        // (parec normalmente devuelve múltiplos, pero por si acaso).
-                        let usable = n - (n % 2);
-                        let mut samples = Vec::with_capacity(usable / 2);
-                        for chunk in buf[..usable].chunks_exact(2) {
-                            samples.push(i16::from_le_bytes([chunk[0], chunk[1]]));
+                        acc.extend_from_slice(&buf[..n]);
+                        // Sólo convertimos frames completos; el remanente queda
+                        // en `acc` para la próxima lectura.
+                        let usable = acc.len() - (acc.len() % BYTES_PER_FRAME);
+                        if usable == 0 {
+                            continue;
                         }
+                        let mut samples = Vec::with_capacity(usable / 2);
+                        for s in acc[..usable].chunks_exact(2) {
+                            samples.push(i16::from_le_bytes([s[0], s[1]]));
+                        }
+                        acc.drain(..usable);
                         let _ = tx.try_send(CapturedFrame {
                             samples,
                             channels: 2,

@@ -38,7 +38,7 @@ async fn main() {
         features: None,
     };
 
-    let handle = match open_live_stream(desc, None).await {
+    let handle = match open_live_stream(desc, None, None).await {
         Ok(h) => h,
         Err(e) => {
             eprintln!("✗ no se pudo abrir stream: {e}");
