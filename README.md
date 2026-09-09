@@ -73,7 +73,7 @@ AirPlay-compatible devices.
 - [x] Selectable latency profiles (Music / Video / Gaming), persisted across sessions
 - [x] System tray + close-to-tray (app keeps running in the background)
 - [x] Daily-rotated log files + UI toast for async errors
-- [x] Signed auto-update via minisign + GitHub Releases
+- [x] Manual releases through GitHub Releases
 - [x] Windows jitter fix: `HIGH_PRIORITY_CLASS` + MMCSS "Pro Audio" + `THREAD_PRIORITY_TIME_CRITICAL`
 
 ### Next improvements
@@ -97,7 +97,7 @@ AirPlay-compatible devices.
 - **mdns-sd** for AirPlay device discovery on the local network
 - **WASAPI loopback** for system audio capture (Windows only)
 - **ALAC** + **encrypted RTP** (ChaCha20-Poly1305) for HomePod streaming
-- **NSIS** installer and signed auto-updater (minisign) via **GitHub Releases**
+- **NSIS** installer distributed through **GitHub Releases**; updates are installed manually
 
 ## Contributing
 

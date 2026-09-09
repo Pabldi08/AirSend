@@ -42,21 +42,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "createUpdaterArtifacts": true,
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "installMode": "perMachine"
       }
-    }
-  },
-  "plugins": {
-    "updater": {
-      "active": true,
-      "endpoints": [
-        "https://github.com/Pabldi08/AirSend/releases/latest/download/latest.json"
-      ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwOTlDRDNCNkEzODVCOUMKUldTY1d6aHFPODJaMEdHejROdlNjUGp5UWl1OXo0ZnErWjI3ekRQeEtadVpLVnVqTFEzUEJBemgK"
     }
   }
 }

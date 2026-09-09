@@ -13,15 +13,11 @@
    ```
 
 3. GitHub Actions (`.github/workflows/release.yml`) builds on
-   `windows-latest`, signs the installer with the updater key (secrets
-   `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`)
-   and creates a **draft release** with the NSIS `.exe`, the `.exe.sig`
-   and `latest.json`.
+   `windows-latest` and creates a **draft release** with the NSIS `.exe`.
 4. Once the draft is validated, **publish it manually** from GitHub
-   (`gh release edit vX.Y.Z --draft=false --latest`). Installed apps
-   will detect the update on next launch via `tauri-plugin-updater`,
-   verify the minisign signature against the pubkey embedded in
-   `tauri.conf.json`, download, and restart.
+   (`gh release edit vX.Y.Z --draft=false --latest`). Users install new
+   versions by downloading and running the installer; the application does
+   not check for or install updates automatically.
 
 ## Notes for maintainers
 

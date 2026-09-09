@@ -64,7 +64,7 @@ El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta 
 - [x] Perfiles de latencia seleccionables (Música / Vídeo / Gaming), persistentes entre sesiones
 - [x] Bandeja del sistema + cerrar al tray (la app sigue activa de fondo)
 - [x] Logs rotados por día + toast de errores en la UI
-- [x] Auto-update firmado con minisign vía GitHub Releases
+- [x] Releases manuales mediante GitHub Releases
 - [x] Jitter Windows resuelto: `HIGH_PRIORITY_CLASS` + MMCSS "Pro Audio" + `THREAD_PRIORITY_TIME_CRITICAL`
 
 ### Próximas mejoras
@@ -88,7 +88,7 @@ El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta 
 - **mdns-sd** para descubrir dispositivos AirPlay en la red local
 - **WASAPI loopback** para capturar el audio del sistema (sólo Windows)
 - **ALAC** + **RTP cifrado** (ChaCha20-Poly1305) para enviar al HomePod
-- Instalador **NSIS** y auto-updater firmado con **minisign** vía **GitHub Releases**
+- Instalador **NSIS** distribuido mediante **GitHub Releases**; las actualizaciones se instalan manualmente
 
 ## Contribuir
 
