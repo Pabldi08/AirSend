@@ -24,6 +24,46 @@ use crate::discovery::{Device, DeviceKind};
 
 pub const DEFAULT_AIRPLAY_PORT: u16 = 7000;
 
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ManualEndpointError {
+    #[error("the endpoint is empty")]
+    Empty,
+    #[error("port 0 is not valid")]
+    ZeroPort,
+    #[error("'{0}' is not an IP address or IP:port endpoint")]
+    Invalid(String),
+}
+
+/// Parses a manual AirPlay endpoint while retaining compatibility with callers
+/// that already pass the address and port separately. A port embedded in the
+/// endpoint wins over `fallback_port`.
+pub fn parse_manual_endpoint(
+    input: &str,
+    fallback_port: Option<u16>,
+) -> Result<(IpAddr, u16), ManualEndpointError> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Err(ManualEndpointError::Empty);
+    }
+
+    if let Ok(ip) = input.parse::<IpAddr>() {
+        let port = fallback_port.unwrap_or(DEFAULT_AIRPLAY_PORT);
+        if port == 0 {
+            return Err(ManualEndpointError::ZeroPort);
+        }
+        return Ok((ip, port));
+    }
+
+    let endpoint = input
+        .parse::<SocketAddr>()
+        .map_err(|_| ManualEndpointError::Invalid(input.to_string()))?;
+    if endpoint.port() == 0 {
+        return Err(ManualEndpointError::ZeroPort);
+    }
+
+    Ok((endpoint.ip(), endpoint.port()))
+}
+
 #[derive(Debug, Error)]
 pub enum ProbeError {
     #[error("connection to {addr} failed: {source}")]
@@ -95,14 +135,12 @@ pub async fn probe_airplay(ip: IpAddr, port: u16) -> Result<ProbeResult, ProbeEr
         ));
     }
 
-    let server_header = response
-        .lines()
-        .find_map(|line| {
-            let mut parts = line.splitn(2, ':');
-            let key = parts.next()?.trim();
-            let val = parts.next()?.trim();
-            key.eq_ignore_ascii_case("Server").then(|| val.to_string())
-        });
+    let server_header = response.lines().find_map(|line| {
+        let mut parts = line.splitn(2, ':');
+        let key = parts.next()?.trim();
+        let val = parts.next()?.trim();
+        key.eq_ignore_ascii_case("Server").then(|| val.to_string())
+    });
 
     Ok(ProbeResult {
         server_header,
@@ -125,5 +163,69 @@ pub fn manual_device(ip: IpAddr, port: Option<u16>, name: Option<String>) -> Dev
         model: None,
         features: None,
         supports_airplay2: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn parses_bare_ipv4_with_default_port() {
+        assert_eq!(
+            parse_manual_endpoint("192.168.86.20", None),
+            Ok((IpAddr::V4(Ipv4Addr::new(192, 168, 86, 20)), 7000))
+        );
+    }
+
+    #[test]
+    fn parses_ipv4_with_custom_port() {
+        assert_eq!(
+            parse_manual_endpoint("192.168.86.20:7453", None),
+            Ok((IpAddr::V4(Ipv4Addr::new(192, 168, 86, 20)), 7453))
+        );
+    }
+
+    #[test]
+    fn parses_bare_and_bracketed_ipv6() {
+        let localhost = IpAddr::V6(Ipv6Addr::LOCALHOST);
+        assert_eq!(parse_manual_endpoint("::1", None), Ok((localhost, 7000)));
+        assert_eq!(
+            parse_manual_endpoint("[::1]:7453", None),
+            Ok((localhost, 7453))
+        );
+    }
+
+    #[test]
+    fn embedded_port_wins_over_fallback() {
+        assert_eq!(
+            parse_manual_endpoint("192.168.1.10:1", Some(u16::MAX)),
+            Ok((IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), 1))
+        );
+        assert_eq!(
+            parse_manual_endpoint("192.168.1.10:65535", None),
+            Ok((IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)), u16::MAX))
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_endpoints_and_zero_ports() {
+        assert_eq!(
+            parse_manual_endpoint("", None),
+            Err(ManualEndpointError::Empty)
+        );
+        assert_eq!(
+            parse_manual_endpoint("192.168.1.10:0", None),
+            Err(ManualEndpointError::ZeroPort)
+        );
+        assert!(matches!(
+            parse_manual_endpoint("192.168.1.10:65536", None),
+            Err(ManualEndpointError::Invalid(_))
+        ));
+        assert!(matches!(
+            parse_manual_endpoint("homepod.local:7000", None),
+            Err(ManualEndpointError::Invalid(_))
+        ));
     }
 }
