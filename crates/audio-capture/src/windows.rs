@@ -19,7 +19,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver};
 use wasapi::{
@@ -42,6 +42,49 @@ const CHUNK_FRAMES: usize = 352;
 /// durante este tiempo, salimos del loop con error (driver colgado, audio
 /// device desconectado, etc.).
 const EVENT_TIMEOUT_MS: u32 = 3_000;
+const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(10);
+
+struct MmcssGuard(*mut std::ffi::c_void);
+
+impl Drop for MmcssGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if AvRevertMmThreadCharacteristics(self.0) == 0 {
+                tracing::warn!("WASAPI: no se pudo liberar el registro MMCSS");
+            }
+        }
+    }
+}
+
+#[link(name = "avrt")]
+extern "system" {
+    fn AvSetMmThreadCharacteristicsW(
+        task: *const u16,
+        task_index: *mut u32,
+    ) -> *mut std::ffi::c_void;
+    fn AvSetMmThreadPriority(handle: *mut std::ffi::c_void, priority: i32) -> i32;
+    fn AvRevertMmThreadCharacteristics(handle: *mut std::ffi::c_void) -> i32;
+}
+
+fn register_mmcss() -> Option<MmcssGuard> {
+    const AVRT_PRIORITY_CRITICAL: i32 = 2;
+    let task: Vec<u16> = "Pro Audio\0".encode_utf16().collect();
+    let mut task_index = 0;
+    unsafe {
+        let handle = AvSetMmThreadCharacteristicsW(task.as_ptr(), &mut task_index);
+        if handle.is_null() {
+            tracing::warn!("WASAPI: no se pudo registrar el hilo en MMCSS Pro Audio");
+            return None;
+        }
+        if AvSetMmThreadPriority(handle, AVRT_PRIORITY_CRITICAL) == 0 {
+            tracing::warn!("WASAPI: no se pudo asignar prioridad MMCSS crítica");
+            let _ = AvRevertMmThreadCharacteristics(handle);
+            return None;
+        }
+        tracing::info!(task_index, "WASAPI: hilo registrado en MMCSS Pro Audio");
+        Some(MmcssGuard(handle))
+    }
+}
 
 pub struct WindowsCapture {
     name: String,
@@ -145,6 +188,8 @@ fn capture_thread_main(
     init_tx: &std::sync::mpsc::SyncSender<Result<String, String>>,
     tx: crossbeam_channel::Sender<CapturedFrame>,
 ) -> Result<(), String> {
+    let _mmcss = register_mmcss();
+
     // COM en MTA (la API recomendada por wasapi-rs para hilos no UI).
     initialize_mta()
         .ok()
@@ -212,8 +257,17 @@ fn capture_thread_main(
         VecDeque::with_capacity(bytes_per_frame * (buffer_frame_count as usize + CHUNK_FRAMES) * 4);
 
     let chunk_bytes = CHUNK_FRAMES * bytes_per_frame;
+    let mut chunks_captured = 0u64;
+    let mut chunks_dropped = 0u64;
+    let mut last_iteration = Instant::now();
+    let mut last_report = last_iteration;
+    let mut max_event_gap = Duration::ZERO;
 
     while running.load(Ordering::SeqCst) {
+        let now = Instant::now();
+        max_event_gap = max_event_gap.max(now.saturating_duration_since(last_iteration));
+        last_iteration = now;
+
         // Drenamos lo que haya disponible y, mientras tengamos ≥ un chunk,
         // empaquetamos y mandamos.
         capture_client
@@ -221,6 +275,7 @@ fn capture_thread_main(
             .map_err(|e| format!("read_from_device_to_deque: {e}"))?;
 
         while byte_queue.len() >= chunk_bytes {
+            chunks_captured += 1;
             let mut samples = Vec::with_capacity(CHUNK_FRAMES * target_channels as usize);
             // bytes_per_frame = 2 canales * 2 bytes/sample = 4. Consumimos
             // exactamente chunk_bytes bytes y los convertimos a i16 LE.
@@ -240,8 +295,20 @@ fn capture_thread_main(
                 })
                 .is_err()
             {
-                tracing::debug!("capture channel lleno, drop chunk");
+                chunks_dropped += 1;
             }
+        }
+
+        if last_report.elapsed() >= DIAGNOSTICS_INTERVAL {
+            tracing::info!(
+                chunks_captured,
+                chunks_dropped,
+                max_event_gap_ms = max_event_gap.as_millis(),
+                queued_frames = byte_queue.len() / bytes_per_frame,
+                "WASAPI capture diagnostics"
+            );
+            last_report = Instant::now();
+            max_event_gap = Duration::ZERO;
         }
 
         if h_event.wait_for_event(EVENT_TIMEOUT_MS).is_err() {

@@ -21,6 +21,62 @@ const STORE_FILE: &str = "settings.json";
 const KEY_LAST_DEVICE: &str = "last_device";
 const KEY_VOLUME: &str = "volume";
 const KEY_LATENCY: &str = "latency";
+const AUDIO_DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(10);
+
+#[cfg(windows)]
+struct MmcssGuard(*mut std::ffi::c_void);
+
+#[cfg(windows)]
+impl Drop for MmcssGuard {
+    fn drop(&mut self) {
+        #[link(name = "avrt")]
+        extern "system" {
+            fn AvRevertMmThreadCharacteristics(handle: *mut std::ffi::c_void) -> i32;
+        }
+        unsafe {
+            if AvRevertMmThreadCharacteristics(self.0) == 0 {
+                tracing::warn!("airplay-pump: no se pudo liberar el registro MMCSS");
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn register_audio_pump_mmcss() -> Option<MmcssGuard> {
+    const AVRT_PRIORITY_CRITICAL: i32 = 2;
+    #[link(name = "avrt")]
+    extern "system" {
+        fn AvSetMmThreadCharacteristicsW(
+            task: *const u16,
+            task_index: *mut u32,
+        ) -> *mut std::ffi::c_void;
+        fn AvSetMmThreadPriority(handle: *mut std::ffi::c_void, priority: i32) -> i32;
+        fn AvRevertMmThreadCharacteristics(handle: *mut std::ffi::c_void) -> i32;
+    }
+
+    let task: Vec<u16> = "Pro Audio\0".encode_utf16().collect();
+    let mut task_index = 0;
+    unsafe {
+        let handle = AvSetMmThreadCharacteristicsW(task.as_ptr(), &mut task_index);
+        if handle.is_null() {
+            tracing::warn!("airplay-pump: no se pudo registrar el hilo en MMCSS Pro Audio");
+            return None;
+        }
+        if AvSetMmThreadPriority(handle, AVRT_PRIORITY_CRITICAL) == 0 {
+            tracing::warn!("airplay-pump: no se pudo asignar prioridad MMCSS crítica");
+            let _ = AvRevertMmThreadCharacteristics(handle);
+            return None;
+        }
+        tracing::info!(
+            task_index,
+            "airplay-pump: hilo registrado en MMCSS Pro Audio"
+        );
+        Some(MmcssGuard(handle))
+    }
+}
+
+#[cfg(not(windows))]
+fn register_audio_pump_mmcss() {}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct LastDevice {
@@ -254,17 +310,41 @@ fn pump_loop(
 ) {
     use cap_core::streaming::LivePcmFrame;
     use std::sync::atomic::Ordering;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
+    let _mmcss = register_audio_pump_mmcss();
     let mut unexpected_exit = false;
+    let mut frames_forwarded = 0u64;
+    let mut frames_dropped = 0u64;
+    let mut last_frame = Instant::now();
+    let mut last_report = last_frame;
+    let mut max_capture_gap = Duration::ZERO;
     while !stop.load(Ordering::SeqCst) {
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(frame) => {
-                let _ = sender.try_send(LivePcmFrame {
+                let now = Instant::now();
+                max_capture_gap = max_capture_gap.max(now.saturating_duration_since(last_frame));
+                last_frame = now;
+                if !sender.try_send(LivePcmFrame {
                     samples: frame.samples,
                     channels,
                     sample_rate,
-                });
+                }) {
+                    frames_dropped += 1;
+                } else {
+                    frames_forwarded += 1;
+                }
+
+                if last_report.elapsed() >= AUDIO_DIAGNOSTICS_INTERVAL {
+                    tracing::info!(
+                        frames_forwarded,
+                        frames_dropped,
+                        max_capture_gap_ms = max_capture_gap.as_millis(),
+                        "airplay-pump diagnostics"
+                    );
+                    last_report = Instant::now();
+                    max_capture_gap = Duration::ZERO;
+                }
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
             Err(_) => {
