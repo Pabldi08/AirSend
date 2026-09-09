@@ -23,9 +23,10 @@ const ES: Dict = {
   latency_gaming: "Juegos (mínima)",
   latency_hint:
     "Menos latencia es más reactivo, pero sobre Wi-Fi flojo el audio puede entrecortarse. Si oyes cortes, sube a Música.",
-  manual_summary: "¿No aparece tu HomePod? Añade su IP manualmente",
+  manual_summary: "¿No aparece tu HomePod? Añade su IP y puerto manualmente",
   manual_hint:
-    "Algunos routers (Movistar HGU, redes con VLANs) no propagan mDNS entre wifi 2.4 y 5 GHz. Mira la IP del HomePod en la app Casa del iPhone.",
+    "Puedes usar una IP o IP:puerto, por ejemplo 192.168.1.50:7453. Para IPv6 con puerto usa [dirección]:puerto.",
+  manual_endpoint_placeholder: "192.168.1.50[:7000]",
   manual_name_placeholder: "Nombre (opcional)",
   manual_add: "Añadir",
   manual_checking: "verificando…",
@@ -61,9 +62,10 @@ const EN: Dict = {
   latency_gaming: "Gaming (lowest)",
   latency_hint:
     "Lower latency is more responsive, but on weak Wi-Fi the audio may stutter. If you hear drops, switch back to Music.",
-  manual_summary: "Can't see your HomePod? Add its IP manually",
+  manual_summary: "Can't see your HomePod? Add its IP and port manually",
   manual_hint:
-    "Some routers (Movistar HGU, VLAN-segmented networks) don't propagate mDNS between 2.4 and 5 GHz Wi-Fi. Check the HomePod's IP in the iPhone Home app.",
+    "Enter an IP or IP:port, for example 192.168.1.50:7453. Use [address]:port for IPv6.",
+  manual_endpoint_placeholder: "192.168.1.50[:7000]",
   manual_name_placeholder: "Name (optional)",
   manual_add: "Add",
   manual_checking: "checking…",

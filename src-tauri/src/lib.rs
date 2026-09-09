@@ -6,7 +6,7 @@ use std::time::Duration;
 use cap_core::{
     browse_once,
     pairing::{pair_homepod, DeviceDescriptor, PairedSession},
-    probe::manual_device,
+    probe::{manual_device, parse_manual_endpoint},
     probe_airplay, Device, Discovery,
 };
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -396,8 +396,8 @@ async fn add_manual_device(
     name: Option<String>,
     state: State<'_, DiscoveryState>,
 ) -> Result<Device, String> {
-    let parsed: IpAddr = ip.parse().map_err(|e| format!("IP inválida '{ip}': {e}"))?;
-    let port = port.unwrap_or(cap_core::probe::DEFAULT_AIRPLAY_PORT);
+    let (parsed, port) = parse_manual_endpoint(&ip, port)
+        .map_err(|e| format!("endpoint inválido '{ip}': {e}"))?;
 
     let probe = probe_airplay(parsed, port)
         .await
