@@ -31,15 +31,56 @@ const QUEUE_CAPACITY: usize = 64;
 /// `airplay-rtsp/src/connection.rs:137`). El TUI upstream usa 2 s; lo
 /// replicamos para tener margen amplio.
 const FEEDBACK_INTERVAL: Duration = Duration::from_secs(2);
+const CONNECTION_RETRY_DELAY: Duration = Duration::from_millis(750);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamStage {
+    ConnectAndPair,
+    Setup,
+    StartStreaming,
+    SetVolume,
+}
+
+impl std::fmt::Display for StreamStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::ConnectAndPair => "connect/pair",
+            Self::Setup => "RTP setup",
+            Self::StartStreaming => "start streaming",
+            Self::SetVolume => "set volume",
+        };
+        f.write_str(name)
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum StreamError {
     #[error("pairing failed: {0}")]
     Pairing(#[from] PairingError),
-    #[error("AirPlay client error: {0}")]
-    Client(String),
+    #[error("AirPlay {stage} error: {source}")]
+    Client {
+        stage: StreamStage,
+        #[source]
+        source: ap2rs_core::Error,
+    },
+    #[error("AirPlay connection still failed after {attempts} attempts: {last}")]
+    RetryExhausted {
+        attempts: u8,
+        #[source]
+        last: Box<StreamError>,
+    },
     #[error("audio encoder error: {0}")]
     Encoder(String),
+}
+
+impl StreamError {
+    pub fn is_timeout(&self) -> bool {
+        match self {
+            Self::Client { source, .. } => matches!(source, ap2rs_core::Error::Timeout),
+            Self::RetryExhausted { last, .. } => last.is_timeout(),
+            _ => false,
+        }
+    }
 }
 
 /// Perfil de latencia: define el rango (`latency_min`/`latency_max`) con el que
@@ -175,7 +216,10 @@ impl StreamHandle {
         let mut conn = self.connection.lock().await;
         conn.set_volume(v)
             .await
-            .map_err(|e| StreamError::Client(e.to_string()))
+            .map_err(|source| StreamError::Client {
+                stage: StreamStage::SetVolume,
+                source,
+            })
     }
 
     /// Descompone el handle en sus partes para poder pasar el `sender` a un
@@ -210,6 +254,31 @@ pub async fn open_live_stream(
     initial_volume: Option<f32>,
     latency: Option<LatencyProfile>,
 ) -> Result<StreamHandle, StreamError> {
+    let endpoint = format!("{}:{}", descriptor.ip, descriptor.port);
+    let result = retry_once_on_timeout(
+        || open_live_stream_once(descriptor.clone(), initial_volume, latency),
+        CONNECTION_RETRY_DELAY,
+    )
+    .await;
+
+    match result {
+        Ok(handle) => Ok(handle),
+        Err((1, error)) => Err(error),
+        Err((attempts, last)) => {
+            tracing::error!(%endpoint, attempts, error = %last, "AirPlay timeout persisted after retry");
+            Err(StreamError::RetryExhausted {
+                attempts,
+                last: Box::new(last),
+            })
+        }
+    }
+}
+
+async fn open_live_stream_once(
+    descriptor: DeviceDescriptor,
+    initial_volume: Option<f32>,
+    latency: Option<LatencyProfile>,
+) -> Result<StreamHandle, StreamError> {
     let device = build_device(&descriptor)?;
     let config = streaming_stream_config(latency.unwrap_or_default())?;
     let sample_rate = config.audio_format.sample_rate.as_hz();
@@ -218,31 +287,41 @@ pub async fn open_live_stream(
     tracing::info!(ip = %descriptor.ip, "open_live_stream: conectando + pairing");
     let mut connection = Connection::connect_with_pin(device, config, HOMEPOD_TRANSIENT_PIN)
         .await
-        .map_err(|e| StreamError::Client(e.to_string()))?;
+        .map_err(|source| StreamError::Client {
+            stage: StreamStage::ConnectAndPair,
+            source,
+        })?;
 
     tracing::info!("connection establecida — setup() RTP");
     connection
         .setup()
         .await
-        .map_err(|e| StreamError::Client(e.to_string()))?;
+        .map_err(|source| StreamError::Client {
+            stage: StreamStage::Setup,
+            source,
+        })?;
 
     // Ajustamos volumen ANTES de empezar streaming para que las primeras
     // muestras no salgan al volumen que tuviera el HomePod previamente.
-    let target_vol = initial_volume.unwrap_or(DEFAULT_INITIAL_VOLUME).clamp(0.0, 1.0);
+    let target_vol = initial_volume
+        .unwrap_or(DEFAULT_INITIAL_VOLUME)
+        .clamp(0.0, 1.0);
     if let Err(e) = connection.set_volume(target_vol).await {
         tracing::warn!(error = %e, "set_volume inicial falló, sigo igualmente");
     } else {
         tracing::info!(volume = target_vol, "volumen inicial aplicado");
     }
 
-    let (sender, decoder) =
-        LiveAudioDecoder::create_pair(sample_rate, channels, QUEUE_CAPACITY);
+    let (sender, decoder) = LiveAudioDecoder::create_pair(sample_rate, channels, QUEUE_CAPACITY);
 
     tracing::info!("setup OK — start_streaming_live()");
     connection
         .start_streaming_live(decoder)
         .await
-        .map_err(|e| StreamError::Client(e.to_string()))?;
+        .map_err(|source| StreamError::Client {
+            stage: StreamStage::StartStreaming,
+            source,
+        })?;
 
     let connection = Arc::new(AsyncMutex::new(connection));
 
@@ -284,6 +363,25 @@ pub async fn open_live_stream(
     })
 }
 
+async fn retry_once_on_timeout<T, F, Fut>(
+    mut operation: F,
+    retry_delay: Duration,
+) -> Result<T, (u8, StreamError)>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, StreamError>>,
+{
+    match operation().await {
+        Ok(value) => Ok(value),
+        Err(error) if error.is_timeout() => {
+            tracing::warn!(error = %error, "AirPlay operation timed out; retrying once");
+            tokio::time::sleep(retry_delay).await;
+            operation().await.map_err(|error| (2, error))
+        }
+        Err(error) => Err((1, error)),
+    }
+}
+
 fn build_device(d: &DeviceDescriptor) -> Result<Ap2Device, PairingError> {
     // Reutilizamos la construcción de pairing.rs vía un descriptor clonado.
     d.clone().into_ap2_device()
@@ -304,9 +402,8 @@ pub async fn play_test_tone(
     let amp = (amplitude.clamp(0.0, 1.0) * i16::MAX as f32) as f32;
 
     // Ritmo en tiempo real: ~352 frames a 44.1k = ~8 ms por paquete.
-    let packet_dur = Duration::from_micros(
-        (FRAMES_PER_PACKET as u64 * 1_000_000) / handle.sample_rate as u64,
-    );
+    let packet_dur =
+        Duration::from_micros((FRAMES_PER_PACKET as u64 * 1_000_000) / handle.sample_rate as u64);
 
     let mut phase: f32 = 0.0;
     let phase_inc = TAU * freq / sample_rate;
@@ -333,4 +430,83 @@ pub async fn play_test_tone(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    fn timeout(stage: StreamStage) -> StreamError {
+        StreamError::Client {
+            stage,
+            source: ap2rs_core::Error::Timeout,
+        }
+    }
+
+    fn protocol_error(stage: StreamStage) -> StreamError {
+        StreamError::Client {
+            stage,
+            source: ap2rs_core::RtspError::UnexpectedStatus(500).into(),
+        }
+    }
+
+    async fn run_script(
+        outcomes: Vec<Result<&'static str, StreamError>>,
+    ) -> (Result<&'static str, (u8, StreamError)>, usize) {
+        let mut outcomes = VecDeque::from(outcomes);
+        let mut attempts = 0;
+        let result = retry_once_on_timeout(
+            || {
+                attempts += 1;
+                let outcome = outcomes.pop_front().expect("missing scripted outcome");
+                async move { outcome }
+            },
+            Duration::ZERO,
+        )
+        .await;
+        (result, attempts)
+    }
+
+    #[tokio::test]
+    async fn succeeds_without_retry() {
+        let (result, attempts) = run_script(vec![Ok("connected")]).await;
+        assert_eq!(result.unwrap(), "connected");
+        assert_eq!(attempts, 1);
+    }
+
+    #[tokio::test]
+    async fn retries_one_timeout_then_succeeds() {
+        let (result, attempts) = run_script(vec![
+            Err(timeout(StreamStage::ConnectAndPair)),
+            Ok("connected"),
+        ])
+        .await;
+        assert_eq!(result.unwrap(), "connected");
+        assert_eq!(attempts, 2);
+    }
+
+    #[tokio::test]
+    async fn reports_second_timeout() {
+        let (result, attempts) = run_script(vec![
+            Err(timeout(StreamStage::ConnectAndPair)),
+            Err(timeout(StreamStage::Setup)),
+        ])
+        .await;
+        let (reported_attempts, error) = result.unwrap_err();
+        assert_eq!(reported_attempts, 2);
+        assert!(error.is_timeout());
+        assert!(error.to_string().contains("RTP setup"));
+        assert_eq!(attempts, 2);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_protocol_errors() {
+        let (result, attempts) =
+            run_script(vec![Err(protocol_error(StreamStage::ConnectAndPair))]).await;
+        let (reported_attempts, error) = result.unwrap_err();
+        assert_eq!(reported_attempts, 1);
+        assert!(!error.is_timeout());
+        assert_eq!(attempts, 1);
+    }
 }
