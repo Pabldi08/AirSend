@@ -97,12 +97,11 @@ pub async fn probe_airplay(ip: IpAddr, port: u16) -> Result<ProbeResult, ProbeEr
         .map_err(|_| ProbeError::Timeout(connect_timeout))?
         .map_err(|source| ProbeError::Connect { addr, source })?;
 
-    let request = format!(
-        "OPTIONS * RTSP/1.0\r\n\
+    let request = "OPTIONS * RTSP/1.0\r\n\
          CSeq: 1\r\n\
          User-Agent: ConexionAirPlay/0.1\r\n\
          \r\n"
-    );
+        .to_string();
     stream.write_all(request.as_bytes()).await?;
     stream.flush().await?;
 

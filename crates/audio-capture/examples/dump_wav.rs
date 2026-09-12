@@ -24,7 +24,10 @@ fn main() {
         .init();
 
     let args: Vec<String> = std::env::args().collect();
-    let out_path = args.get(1).cloned().unwrap_or_else(|| "out.wav".to_string());
+    let out_path = args
+        .get(1)
+        .cloned()
+        .unwrap_or_else(|| "out.wav".to_string());
     let duration_secs: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(5);
 
     let fmt = CaptureFormat::AIRPLAY_DEFAULT; // 44.1k / 2ch / i16
@@ -53,7 +56,10 @@ fn main() {
     let n_samples = samples_buf.len();
     let n_frames = n_samples / fmt.channels as usize;
     let approx_secs = n_frames as f64 / fmt.sample_rate as f64;
-    println!("✓ capturadas {n_samples} samples (~{:.2} s de audio)", approx_secs);
+    println!(
+        "✓ capturadas {n_samples} samples (~{:.2} s de audio)",
+        approx_secs
+    );
 
     if let Err(e) = write_wav(&out_path, &samples_buf, fmt.sample_rate, fmt.channels) {
         eprintln!("✗ escribir WAV: {e}");

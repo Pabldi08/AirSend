@@ -159,7 +159,14 @@ fn run_capture(
                 move |data: &[u16], _| {
                     let converted: Vec<i16> =
                         data.iter().map(|&u| (u as i32 - 32768) as i16).collect();
-                    forward_i16(&converted, in_channels, in_rate, want_channels, want_rate, &tx_cb)
+                    forward_i16(
+                        &converted,
+                        in_channels,
+                        in_rate,
+                        want_channels,
+                        want_rate,
+                        &tx_cb,
+                    )
                 },
                 err_fn,
                 None,
@@ -268,8 +275,7 @@ fn resample_linear(input: &[i16], channels: usize, src_rate: u32, dst_rate: u32)
         return input.to_vec();
     }
     let src_frames = input.len() / channels;
-    let dst_frames =
-        ((src_frames as u64 * dst_rate as u64) / src_rate as u64).max(1) as usize;
+    let dst_frames = ((src_frames as u64 * dst_rate as u64) / src_rate as u64).max(1) as usize;
     let mut out = Vec::with_capacity(dst_frames * channels);
     let ratio = src_rate as f64 / dst_rate as f64;
 

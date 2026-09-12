@@ -10,16 +10,19 @@ use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 use audio_capture::{start_loopback, CaptureFormat};
-use crossbeam_channel::RecvTimeoutError;
 use cap_core::pairing::DeviceDescriptor;
 use cap_core::streaming::open_live_stream;
+use crossbeam_channel::RecvTimeoutError;
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,airplay_client=info,airplay_audio=warn,audio_capture=info")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new(
+                    "info,airplay_client=info,airplay_audio=warn,audio_capture=info",
+                )
+            }),
         )
         .init();
 

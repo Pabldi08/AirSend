@@ -83,16 +83,18 @@ impl Discovery {
                             .get("srcvers")
                             .map(|v| v.starts_with("3"))
                             .unwrap_or(false)
-                            || features
-                                .as_ref()
-                                .map(|f| f.contains("0x"))
-                                .unwrap_or(false);
+                            || features.as_ref().map(|f| f.contains("0x")).unwrap_or(false);
 
                         let addresses: Vec<IpAddr> = info.get_addresses().iter().copied().collect();
 
                         let device = Device {
                             id: info.get_fullname().to_string(),
-                            name: info.get_fullname().split('.').next().unwrap_or("?").to_string(),
+                            name: info
+                                .get_fullname()
+                                .split('.')
+                                .next()
+                                .unwrap_or("?")
+                                .to_string(),
                             host: info.get_hostname().to_string(),
                             addresses,
                             port: info.get_port(),

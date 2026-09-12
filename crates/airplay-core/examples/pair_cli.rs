@@ -14,8 +14,9 @@ use cap_core::pairing::{pair_homepod, DeviceDescriptor};
 async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,ap2rs_client=debug,ap2rs_pairing=debug")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("info,ap2rs_client=debug,ap2rs_pairing=debug")
+            }),
         )
         .init();
 

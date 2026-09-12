@@ -22,9 +22,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver};
-use wasapi::{
-    get_default_device, initialize_mta, Direction, SampleType, ShareMode, WaveFormat,
-};
+use wasapi::{get_default_device, initialize_mta, Direction, SampleType, ShareMode, WaveFormat};
 
 use crate::{Capture, CaptureError, CaptureFormat, CapturedFrame};
 
@@ -141,13 +139,8 @@ pub fn start(
     let handle = thread::Builder::new()
         .name("audio-capture-wasapi".into())
         .spawn(move || {
-            let result = capture_thread_main(
-                running_thread,
-                target_rate,
-                target_channels,
-                &init_tx,
-                tx,
-            );
+            let result =
+                capture_thread_main(running_thread, target_rate, target_channels, &init_tx, tx);
             if let Err(e) = result {
                 tracing::error!(error = %e, "WASAPI capture thread exit con error");
                 // Si init_tx aún no ha sido consumido, asegurar que se envía el error.
@@ -210,7 +203,14 @@ fn capture_thread_main(
     // Formato deseado: 16-bit signed int, 44.1k, estéreo. Con AUTOCONVERTPCM
     // (convert=true en initialize_client) WASAPI hace la conversión desde el
     // mix format del dispositivo (típicamente 48k float32).
-    let desired_format = WaveFormat::new(16, 16, &SampleType::Int, target_rate as usize, target_channels as usize, None);
+    let desired_format = WaveFormat::new(
+        16,
+        16,
+        &SampleType::Int,
+        target_rate as usize,
+        target_channels as usize,
+        None,
+    );
     let bytes_per_frame = desired_format.get_blockalign() as usize; // 4 bytes (2ch * 2B)
 
     let (def_period, _min_period) = audio_client

@@ -82,7 +82,9 @@ pub fn start_loopback(
         if linux_parec::available() {
             return linux_parec::start(fmt);
         }
-        tracing::warn!("parec no disponible — fallback a cpal (probable mic, no audio del sistema)");
+        tracing::warn!(
+            "parec no disponible — fallback a cpal (probable mic, no audio del sistema)"
+        );
         linux::start(fmt)
     }
     #[cfg(windows)]

@@ -112,7 +112,7 @@ struct ConnectionState {
 struct ActiveStream {
     connection: std::sync::Arc<tokio::sync::Mutex<cap_core::streaming::Connection>>,
     _heartbeat: cap_core::streaming::HeartbeatGuard,
-    capture: Box<dyn audio_capture::Capture>,
+    _capture: Box<dyn audio_capture::Capture>,
     pump: Option<std::thread::JoinHandle<()>>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ip: String,
@@ -171,10 +171,7 @@ async fn start_discovery_stream(
     let mut rx = {
         let mut slot = state.inner.lock().map_err(|e| e.to_string())?;
         if slot.is_some() {
-            tracing::debug!(
-                "discovery ya en curso, replayé {} cacheados",
-                cached.len()
-            );
+            tracing::debug!("discovery ya en curso, replayé {} cacheados", cached.len());
             return Ok(());
         }
         let discovery = Discovery::new().map_err(|e| e.to_string())?;
@@ -279,7 +276,7 @@ async fn start_streaming(
     let active = ActiveStream {
         connection,
         _heartbeat: heartbeat,
-        capture,
+        _capture: capture,
         pump: Some(pump),
         stop,
         ip: parsed.to_string(),
@@ -376,10 +373,7 @@ async fn stop_streaming(state: State<'_, StreamingState>) -> Result<(), String> 
 }
 
 #[tauri::command]
-async fn set_stream_volume(
-    volume: f32,
-    state: State<'_, StreamingState>,
-) -> Result<f32, String> {
+async fn set_stream_volume(volume: f32, state: State<'_, StreamingState>) -> Result<f32, String> {
     let mut slot = state.inner.lock().await;
     let active = slot
         .as_mut()
@@ -476,8 +470,8 @@ async fn add_manual_device(
     name: Option<String>,
     state: State<'_, DiscoveryState>,
 ) -> Result<Device, String> {
-    let (parsed, port) = parse_manual_endpoint(&ip, port)
-        .map_err(|e| format!("endpoint inválido '{ip}': {e}"))?;
+    let (parsed, port) =
+        parse_manual_endpoint(&ip, port).map_err(|e| format!("endpoint inválido '{ip}': {e}"))?;
 
     let probe = probe_airplay(parsed, port)
         .await
@@ -532,7 +526,9 @@ fn get_last_device(app: tauri::AppHandle) -> Result<Option<LastDevice>, String> 
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
     let value = store.get(KEY_LAST_DEVICE);
     match value {
-        Some(v) => serde_json::from_value(v).map(Some).map_err(|e| e.to_string()),
+        Some(v) => serde_json::from_value(v)
+            .map(Some)
+            .map_err(|e| e.to_string()),
         None => Ok(None),
     }
 }
@@ -562,7 +558,9 @@ fn get_volume(app: tauri::AppHandle) -> Result<Option<f32>, String> {
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
     let value = store.get(KEY_VOLUME);
     match value {
-        Some(v) => serde_json::from_value(v).map(Some).map_err(|e| e.to_string()),
+        Some(v) => serde_json::from_value(v)
+            .map(Some)
+            .map_err(|e| e.to_string()),
         None => Ok(None),
     }
 }
@@ -657,7 +655,11 @@ fn resolve_log_dir() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
     {
         let base = std::env::var_os("APPDATA")?;
-        Some(std::path::PathBuf::from(base).join(APP_DIRNAME).join("logs"))
+        Some(
+            std::path::PathBuf::from(base)
+                .join(APP_DIRNAME)
+                .join("logs"),
+        )
     }
     #[cfg(target_os = "macos")]
     {
@@ -737,13 +739,12 @@ fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
 fn raise_process_priority() {
     use std::ffi::c_void;
 
-    #[allow(non_camel_case_types)]
-    type HANDLE = *mut c_void;
+    type Handle = *mut c_void;
     const HIGH_PRIORITY_CLASS: u32 = 0x0000_0080;
 
     extern "system" {
-        fn GetCurrentProcess() -> HANDLE;
-        fn SetPriorityClass(process: HANDLE, class: u32) -> i32;
+        fn GetCurrentProcess() -> Handle;
+        fn SetPriorityClass(process: Handle, class: u32) -> i32;
     }
 
     unsafe {

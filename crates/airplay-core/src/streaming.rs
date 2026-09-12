@@ -127,7 +127,7 @@ fn streaming_stream_config(profile: LatencyProfile) -> Result<StreamConfig, Stre
 
     // Magic cookie del codec ALAC: el HomePod lo necesita en SETUP para
     // saber descodificar. Lo extraemos de un encoder temporal.
-    let asc = AlacEncoder::new(audio_format.clone())
+    let asc = AlacEncoder::new(audio_format)
         .map_err(|e| StreamError::Encoder(e.to_string()))?
         .magic_cookie();
 
@@ -399,7 +399,7 @@ pub async fn play_test_tone(
     let sample_rate = handle.sample_rate as f32;
     let channels = handle.channels as usize;
     let total_samples = (handle.sample_rate as u64 * duration.as_millis() as u64 / 1000) as usize;
-    let amp = (amplitude.clamp(0.0, 1.0) * i16::MAX as f32) as f32;
+    let amp = amplitude.clamp(0.0, 1.0) * i16::MAX as f32;
 
     // Ritmo en tiempo real: ~352 frames a 44.1k = ~8 ms por paquete.
     let packet_dur =

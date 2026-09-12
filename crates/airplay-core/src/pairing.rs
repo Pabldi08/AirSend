@@ -73,8 +73,8 @@ impl DeviceDescriptor {
             }
             IpAddr::V6(_) => "02:00:00:00:00:01".to_string(),
         });
-        let id =
-            DeviceId::from_mac_string(&mac).map_err(|e| PairingError::InvalidDeviceId(e.to_string()))?;
+        let id = DeviceId::from_mac_string(&mac)
+            .map_err(|e| PairingError::InvalidDeviceId(e.to_string()))?;
 
         // Features conservadoras suficientes para pair-setup transient + RTSP.
         // Si el descriptor trae features explícitas (mDNS), las usamos.
