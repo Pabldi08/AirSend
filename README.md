@@ -107,3 +107,16 @@ Release instructions and maintainer notes live in
 ## License
 
 GPL-2.0 (compatible with `airplay2-rs`, used as upstream base).
+
+## Support the project
+
+If you find AirSend useful, you can support the project here:
+
+<a href="https://ko-fi.com/E3E226XAYR" target="_blank" rel="noopener noreferrer">
+  <img
+    src="https://storage.ko-fi.com/cdn/kofi3.png?v=6"
+    alt="Buy Me a Coffee"
+    width="140"
+    height="36"
+  />
+</a>
