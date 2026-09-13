@@ -98,3 +98,16 @@ Las instrucciones de release y notas para mantenedores están en
 ## Licencia
 
 GPL-2.0 (compatible con `airplay2-rs`, usado como base).
+
+## Apoya el proyecto
+
+Si encuentras AirSend útil puedes apoyar el proyecto aquí:
+
+<a href="https://ko-fi.com/E3E226XAYR" target="_blank" rel="noopener noreferrer">
+  <img
+    src="https://storage.ko-fi.com/cdn/kofi3.png?v=6"
+    alt="Buy Me a Coffee"
+    width="140"
+    height="36"
+  />
+</a>
