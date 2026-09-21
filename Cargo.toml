@@ -10,9 +10,9 @@ members = [
 [workspace.package]
 version = "0.1.6"
 edition = "2021"
-license = "GPL-2.0"
+license = "GPL-3.0-or-later"
 authors = ["Pablo Díaz Ruipérez <diazruiperezpablo@gmail.com>"]
-repository = "https://github.com/pablodiaz/ConexionAirPlay"
+repository = "https://github.com/Pabldi08/AirSend"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }

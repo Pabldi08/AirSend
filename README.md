@@ -34,7 +34,7 @@ and does not aim to cover screen mirroring or multi-target streaming.
 | Feature | AirSend | TuneBlade | AirParrot |
 |---|---|---|---|
 | Platform | Windows | Windows | Windows + macOS |
-| License / price | GPL-2.0, free | Freeware, closed-source | Commercial (~€15) |
+| License / price | GPL-3.0-or-later, free | Freeware, closed-source | Commercial (~€15) |
 | AirPlay 2 with HomePod | ✅ | ⚠️ Unstable / often fails to pair | ✅ |
 | Pair-setup transient + verify | ✅ | ❌, reliable only on AirPlay 1 | ✅ |
 | Codec | ALAC + ChaCha20-Poly1305 | ALAC | ALAC |
@@ -106,7 +106,13 @@ Release instructions and maintainer notes live in
 
 ## License
 
-GPL-2.0 (compatible with `airplay2-rs`, used as upstream base).
+AirSend is free software licensed under the
+[GNU General Public License v3.0 or later](LICENSE).
+
+The project incorporates and modifies code from
+[`lmcgartland/airplay2-rs`](https://github.com/lmcgartland/airplay2-rs),
+which is also licensed under GPL-3.0-or-later. See the `LICENSE` file for
+the complete terms.
 
 ## Support the project
 

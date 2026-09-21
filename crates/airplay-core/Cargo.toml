@@ -16,7 +16,8 @@ serde = { workspace = true }
 mdns-sd = { workspace = true }
 async-trait = "0.1"
 
-# Reutilizamos el sender AirPlay 2 alpha de lmcgartland/airplay2-rs (GPL-2.0).
+# Reutilizamos el sender AirPlay 2 alpha de lmcgartland/airplay2-rs
+# (GPL-3.0-or-later).
 # Apuntamos a nuestro fork `Pabldi08/airplay2-rs` con un parche mínimo
 # (`set_socket_qos` gated detrás de `#[cfg(unix)]`, stub en Windows, y prioridad
 # MMCSS correcta para el sender) porque el upstream no compila en MSVC tal cual.

@@ -29,7 +29,7 @@ AirSend prioriza ser gratuito, auditable y compatible con HomePod mediante AirPl
 | Característica | AirSend | TuneBlade | AirParrot |
 |---|---|---|---|
 | Plataforma | Windows | Windows | Windows + macOS |
-| Licencia / precio | GPL-2.0, gratis | Freeware, closed-source | Comercial (~15 €) |
+| Licencia / precio | GPL-3.0-or-later, gratis | Freeware, closed-source | Comercial (~15 €) |
 | AirPlay 2 con HomePod | ✅ | ⚠️ Inestable / no pairea en muchos casos | ✅ |
 | Pair-setup transient + verify | ✅ | ❌, sólo AirPlay 1 fiable | ✅ |
 | Codec | ALAC + ChaCha20-Poly1305 | ALAC | ALAC |
@@ -97,7 +97,13 @@ Las instrucciones de release y notas para mantenedores están en
 
 ## Licencia
 
-GPL-2.0 (compatible con `airplay2-rs`, usado como base).
+AirSend es software libre publicado bajo la
+[GNU General Public License v3.0 o posterior](LICENSE).
+
+El proyecto incorpora y modifica código de
+[`lmcgartland/airplay2-rs`](https://github.com/lmcgartland/airplay2-rs),
+que también está publicado bajo GPL-3.0-or-later. Consulta el archivo
+`LICENSE` para conocer los términos completos.
 
 ## Apoya el proyecto
 
