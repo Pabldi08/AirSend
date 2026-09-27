@@ -27,6 +27,13 @@
           <span id="status" class="status"></span>
         </div>
         <ul id="devices"></ul>
+        <div class="multi-control">
+          <label for="multi-device">
+            <input id="multi-device" type="checkbox" />
+            <span data-i18n="multi_device">Reproducir en varios dispositivos</span>
+          </label>
+          <p class="hint" data-i18n="multi_device_hint">Experimental: al conectar otro receptor durante la reproducción, se añadirá al audio actual. Los receptores pueden no estar perfectamente sincronizados.</p>
+        </div>
         <div id="player" class="player" hidden>
           <div class="player-row">
             <button id="play-stop" class="play" data-i18n="play_generic">▶ Reproducir audio del PC</button>
@@ -79,6 +86,14 @@
         </details>
       </section>
     </main>
+    <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-message"></p>
+      <div class="dialog-actions">
+        <button id="confirm-cancel" type="button" class="secondary" data-i18n="cancel">Cancelar</button>
+        <button id="confirm-accept" type="button"></button>
+      </div>
+    </dialog>
     <div id="toast" class="toast" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -29,7 +29,8 @@ Download the latest release:
 This table summarizes the main differences between AirSend and some
 popular alternatives. AirSend prioritizes being free, auditable and
 compatible with HomePod over AirPlay 2 — it is still a young project
-and does not aim to cover screen mirroring or multi-target streaming.
+and does not aim to cover screen mirroring. Multi-device playback is
+experimental and does not synchronize receiver clocks.
 
 | Feature | AirSend | TuneBlade | AirParrot |
 |---|---|---|---|
@@ -86,7 +87,7 @@ AirPlay-compatible devices.
 
 ### Future
 
-- [ ] Simultaneous multi-target (group streaming to multiple HomePods)
+- [ ] Validate experimental multi-device playback on multiple receivers and add clock synchronization
 - [ ] Per-application audio capture (WASAPI process-loopback, Win10 1903+)
 - [ ] Upstream PR to `lmcgartland/airplay2-rs` with the two Windows patches
 - [ ] Stable support for other AirPlay 2 receivers (Apple TV, AirPort Express, third-party speakers)

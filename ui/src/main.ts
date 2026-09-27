@@ -41,8 +41,11 @@ function setupAsyncErrorListener() {
     showToast(message);
     if (playing) {
       playing = false;
+      activeRoutes.clear();
+      void invoke("stop_streaming");
       playerStatus.textContent = t("error_prefix", { err: message });
       updatePlayerUi();
+      render();
     }
   });
 }
@@ -53,6 +56,28 @@ let unlisten: UnlistenFn | null = null;
 let connectedId: string | null = null;
 let connectingId: string | null = null;
 let connectedRoute: Device | null = null;
+const activeRoutes = new Map<string, Device>();
+let actionBusy = false;
+
+const multiToggle = document.getElementById("multi-device") as HTMLInputElement;
+const confirmDialog = document.getElementById("confirm-dialog") as HTMLDialogElement;
+const confirmTitle = document.getElementById("confirm-title") as HTMLHeadingElement;
+const confirmMessage = document.getElementById("confirm-message") as HTMLParagraphElement;
+const confirmCancel = document.getElementById("confirm-cancel") as HTMLButtonElement;
+const confirmAccept = document.getElementById("confirm-accept") as HTMLButtonElement;
+
+function askConfirmation(title: string, message: string, acceptLabel: string): Promise<boolean> {
+  confirmTitle.textContent = title;
+  confirmMessage.textContent = message;
+  confirmAccept.textContent = acceptLabel;
+  return new Promise((resolve) => {
+    confirmDialog.returnValue = "";
+    confirmAccept.onclick = () => confirmDialog.close("accept");
+    confirmCancel.onclick = () => confirmDialog.close("cancel");
+    confirmDialog.addEventListener("close", () => resolve(confirmDialog.returnValue === "accept"), { once: true });
+    confirmDialog.showModal();
+  });
+}
 
 interface ConnectionInfo {
   ip: string;
@@ -60,11 +85,54 @@ interface ConnectionInfo {
   name: string;
 }
 
+async function streamTo(device: Device, command: "start_streaming" | "add_streaming", preferred?: Device | null): Promise<{ route: Device; ip: string }> {
+  let lastError: unknown = new Error("dispositivo sin dirección IP");
+  for (const route of routesFor(discovered, device, preferred ?? null)) {
+    const ip = route.addresses.find((a) => !a.includes(":")) ?? route.addresses[0];
+    if (!ip) continue;
+    try {
+      await invoke(command, {
+        ip,
+        port: route.port,
+        name: device.name,
+        volume: Number(volumeSlider.value) / 100,
+        latencyMs: confirmedLatencyMs,
+      });
+      return { route, ip };
+    } catch (err) {
+      lastError = err;
+      if (!String(err).startsWith("stream:")) break;
+    }
+  }
+  throw lastError;
+}
+
 async function connect(device: Device) {
-  if (connectingId) return;
+  if (actionBusy || latencyApplying) return;
+  if (playing && !multiToggle.checked) {
+    const current = connectedId ? known.get(connectedId)?.name ?? t("player_playing") : t("player_playing");
+    const confirmed = await askConfirmation(
+      t("switch_title"),
+      t("switch_message", { from: current, to: device.name }),
+      t("switch_confirm", { name: device.name }),
+    );
+    if (!confirmed || actionBusy) return;
+  }
+  actionBusy = true;
   connectingId = device.id;
   render();
   try {
+    if (playing) {
+      const { route, ip } = await streamTo(device, multiToggle.checked ? "add_streaming" : "start_streaming");
+      if (!multiToggle.checked) {
+        activeRoutes.clear();
+        connectedId = device.id;
+        connectedRoute = route;
+        void invoke("save_last_device", { ip, port: route.port, name: device.name });
+      }
+      activeRoutes.set(device.id, route);
+      return;
+    }
     let lastError: unknown = new Error("dispositivo sin dirección IP");
     let route: Device | null = null;
     for (const candidate of routesFor(discovered, device)) {
@@ -88,18 +156,45 @@ async function connect(device: Device) {
   } catch (err) {
     statusEl.textContent = t("error_prefix", { err: String(err) });
   } finally {
+    actionBusy = false;
     connectingId = null;
     render();
   }
 }
 
-async function disconnect() {
-  if (playing) await stopPlay();
+async function disconnect(device: Device) {
+  if (actionBusy || latencyApplying) return;
+  actionBusy = true;
+  render();
   try {
+    if (playing && activeRoutes.size > 1) {
+      const route = activeRoutes.get(device.id);
+      const ip = route?.addresses.find((a) => !a.includes(":")) ?? route?.addresses[0];
+      if (!ip || !route) throw new Error("dispositivo sin dirección IP");
+      await invoke("remove_streaming", { ip, port: route.port });
+      activeRoutes.delete(device.id);
+      if (connectedId === device.id) {
+        const next = activeRoutes.entries().next().value as [string, Device];
+        connectedId = next[0];
+        connectedRoute = next[1];
+        const nextIp = next[1].addresses.find((a) => !a.includes(":")) ?? next[1].addresses[0];
+        if (nextIp) void invoke("save_last_device", { ip: nextIp, port: next[1].port, name: known.get(next[0])?.name ?? next[1].name });
+      }
+      return;
+    }
+    if (playing) {
+      await invoke("stop_streaming");
+      playing = false;
+      activeRoutes.clear();
+      playerStatus.textContent = "";
+    }
     await invoke("disconnect_device");
-  } finally {
     connectedId = null;
     connectedRoute = null;
+  } catch (err) {
+    statusEl.textContent = t("error_prefix", { err: String(err) });
+  } finally {
+    actionBusy = false;
     render();
   }
 }
@@ -124,6 +219,7 @@ let latencyTimer: number | null = null;
 function updatePlayerUi() {
   const dev = connectedId ? known.get(connectedId) : null;
   playerEl.hidden = !dev;
+  playBtn.disabled = actionBusy || latencyApplying;
   if (!dev) return;
   if (playing) {
     playBtn.textContent = t("stop");
@@ -135,63 +231,98 @@ function updatePlayerUi() {
 }
 
 async function startPlay() {
+  if (actionBusy || latencyApplying) return;
   const dev = connectedId ? known.get(connectedId) : null;
   if (!dev) return;
+  actionBusy = true;
   playBtn.disabled = true;
   playerStatus.textContent = t("player_starting");
   try {
     const vol = Number(volumeSlider.value) / 100;
-    let lastError: unknown = new Error("dispositivo sin dirección IP");
-    let activeRoute: Device | null = null;
-    for (const route of routesFor(discovered, dev, connectedRoute)) {
-      const ip = route.addresses.find((a) => !a.includes(":")) ?? route.addresses[0];
-      if (!ip) continue;
-      try {
-        await invoke("start_streaming", {
-          ip,
-          port: route.port,
-          name: dev.name,
-          volume: vol,
-          latencyMs: confirmedLatencyMs,
-        });
-        activeRoute = route;
-        void invoke("save_last_device", { ip, port: route.port, name: dev.name });
-        break;
-      } catch (err) {
-        lastError = err;
-        // Capture and settings errors cannot be repaired by switching ports.
-        if (!String(err).startsWith("stream:")) break;
-      }
-    }
-    if (!activeRoute) throw lastError;
-    connectedRoute = activeRoute;
+    const { route, ip } = await streamTo(dev, "start_streaming", connectedRoute);
+    connectedRoute = route;
+    activeRoutes.clear();
+    activeRoutes.set(dev.id, route);
     playing = true;
     playerStatus.textContent = t("player_playing");
+    void invoke("save_last_device", { ip, port: route.port, name: dev.name });
     // Persistimos para auto-reconnect (C2) y carga rápida en futuros arranques.
     void invoke("save_volume", { volume: vol });
   } catch (err) {
     playerStatus.textContent = t("error_prefix", { err: String(err) });
   } finally {
-    playBtn.disabled = false;
+    actionBusy = false;
     updatePlayerUi();
+    render();
   }
 }
 
 async function stopPlay() {
+  if (actionBusy || latencyApplying) return;
+  actionBusy = true;
   playBtn.disabled = true;
   try {
     await invoke("stop_streaming");
     playing = false;
+    activeRoutes.clear();
     playerStatus.textContent = "";
   } finally {
-    playBtn.disabled = false;
+    actionBusy = false;
     updatePlayerUi();
+    render();
   }
 }
 
 playBtn.addEventListener("click", () => {
   if (playing) void stopPlay();
   else void startPlay();
+});
+
+multiToggle.addEventListener("change", async () => {
+  const enabled = multiToggle.checked;
+  if (actionBusy || latencyApplying) {
+    multiToggle.checked = !enabled;
+    return;
+  }
+  if (!enabled && playing && activeRoutes.size > 1) {
+    const keepId = connectedId && activeRoutes.has(connectedId)
+      ? connectedId
+      : activeRoutes.keys().next().value as string;
+    const keepName = known.get(keepId)?.name ?? t("player_playing");
+    const confirmed = await askConfirmation(
+      t("multi_off_title"),
+      t("multi_off_message", { name: keepName }),
+      t("multi_off_confirm", { name: keepName }),
+    );
+    if (!confirmed) {
+      multiToggle.checked = true;
+      return;
+    }
+    actionBusy = true;
+    render();
+    try {
+      for (const [id, route] of [...activeRoutes]) {
+        if (id === keepId) continue;
+        const ip = route.addresses.find((a) => !a.includes(":")) ?? route.addresses[0];
+        if (!ip) throw new Error("dispositivo sin dirección IP");
+        await invoke("remove_streaming", { ip, port: route.port });
+        activeRoutes.delete(id);
+      }
+    } catch (err) {
+      multiToggle.checked = true;
+      showToast(t("error_prefix", { err: String(err) }));
+      return;
+    } finally {
+      actionBusy = false;
+      render();
+    }
+  }
+  try {
+    await invoke("save_multi_device", { enabled });
+  } catch (err) {
+    multiToggle.checked = !enabled;
+    showToast(t("error_prefix", { err: String(err) }));
+  }
 });
 
 volumeSlider.addEventListener("input", () => {
@@ -215,7 +346,7 @@ function refreshLatencyUi() {
   const pending = Number(latencySlider.value);
   const cooldownMs = Math.max(0, latencyCooldownUntil - Date.now());
   latencyOut.value = `${pending} ms`;
-  latencyConfirm.disabled = latencyApplying || cooldownMs > 0 || pending === confirmedLatencyMs;
+  latencyConfirm.disabled = actionBusy || latencyApplying || cooldownMs > 0 || pending === confirmedLatencyMs;
   if (latencyApplying) latencyStatus.textContent = t("latency_applying");
   else if (cooldownMs > 0)
     latencyStatus.textContent = t("latency_cooldown", { seconds: Math.ceil(cooldownMs / 1000) });
@@ -238,7 +369,7 @@ function setLatencyCooldown(ms: number) {
 latencySlider.addEventListener("input", refreshLatencyUi);
 latencyConfirm.addEventListener("click", async () => {
   const latencyMs = Number(latencySlider.value);
-  if (latencyApplying || Date.now() < latencyCooldownUntil || latencyMs === confirmedLatencyMs) return;
+  if (actionBusy || latencyApplying || Date.now() < latencyCooldownUntil || latencyMs === confirmedLatencyMs) return;
   latencyApplying = true;
   playBtn.disabled = true;
   refreshLatencyUi();
@@ -263,9 +394,9 @@ latencyConfirm.addEventListener("click", async () => {
     }
   } finally {
     latencyApplying = false;
-    playBtn.disabled = false;
     refreshLatencyUi();
     updatePlayerUi();
+    render();
   }
 });
 
@@ -278,7 +409,7 @@ function render() {
   });
   for (const d of sorted) {
     const li = document.createElement("li");
-    const isConnected = connectedId === d.id;
+    const isConnected = playing ? activeRoutes.has(d.id) : connectedId === d.id;
     const isConnecting = connectingId === d.id;
     li.className = `device ${d.kind}${isConnected ? " connected" : ""}`;
     const addr = d.addresses.find((a) => !a.includes(":")) ?? d.addresses[0] ?? d.host;
@@ -298,10 +429,11 @@ function render() {
       btn.disabled = true;
     } else if (isConnected) {
       btn.textContent = t("disconnect");
-      btn.addEventListener("click", () => void disconnect());
+      btn.disabled = actionBusy || latencyApplying;
+      btn.addEventListener("click", () => void disconnect(d));
     } else {
       btn.textContent = t("connect");
-      btn.disabled = connectingId !== null;
+      btn.disabled = actionBusy || latencyApplying;
       btn.addEventListener("click", () => void connect(d));
     }
     li.appendChild(btn);
@@ -313,6 +445,8 @@ function render() {
       ? t("devices_count_one")
       : t("devices_count_other", { n: known.size });
   updatePlayerUi();
+  multiToggle.disabled = actionBusy || latencyApplying;
+  refreshLatencyUi();
 }
 
 function refreshKnownDevices() {
@@ -399,8 +533,16 @@ setupLangToggle();
 void initialize();
 
 async function initialize() {
-  await Promise.all([preloadSavedVolume(), preloadSavedLatency()]);
+  await Promise.all([preloadSavedVolume(), preloadSavedLatency(), preloadMultiDevice()]);
   await bootstrap();
+}
+
+async function preloadMultiDevice() {
+  try {
+    multiToggle.checked = await invoke<boolean>("get_multi_device");
+  } catch {
+    multiToggle.checked = false;
+  }
 }
 
 function setupLangToggle() {

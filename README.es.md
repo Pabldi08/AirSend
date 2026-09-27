@@ -24,7 +24,7 @@ Descarga la última versión estable en:
 ## Comparativa con alternativas
 
 Esta tabla resume las diferencias principales entre AirSend y algunas alternativas populares.
-AirSend prioriza ser gratuito, auditable y compatible con HomePod mediante AirPlay 2, aunque todavía es un proyecto joven y no pretende cubrir funciones como mirroring de pantalla o multi-destino.
+AirSend prioriza ser gratuito, auditable y compatible con HomePod mediante AirPlay 2, aunque todavía es un proyecto joven y no pretende cubrir funciones como mirroring de pantalla. La reproducción en varios dispositivos es experimental y no sincroniza los relojes de los receptores.
 
 | Característica | AirSend | TuneBlade | AirParrot |
 |---|---|---|---|
@@ -77,7 +77,7 @@ El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta 
 
 ### Futuro
 
-- [ ] Multi-destino simultáneo (group streaming a varios HomePods)
+- [ ] Validar la reproducción experimental en varios receptores y añadir sincronización de relojes
 - [ ] Selección de audio por aplicación (WASAPI process-loopback, Win10 1903+)
 - [ ] PR upstream a `lmcgartland/airplay2-rs` con los dos patches Windows
 - [ ] Soporte estable para otros receptores AirPlay 2 (Apple TV, AirPort Express, altavoces de terceros)

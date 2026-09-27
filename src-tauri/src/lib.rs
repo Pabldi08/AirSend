@@ -21,6 +21,7 @@ const STORE_FILE: &str = "settings.json";
 const KEY_LAST_DEVICE: &str = "last_device";
 const KEY_VOLUME: &str = "volume";
 const KEY_LATENCY: &str = "latency";
+const KEY_MULTI_DEVICE: &str = "multi_device";
 const AUDIO_DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(10);
 const LATENCY_CHANGE_COOLDOWN: Duration = Duration::from_secs(10);
 
@@ -141,18 +142,36 @@ struct ConnectionState {
     inner: tokio::sync::Mutex<Option<PairedSession>>,
 }
 
-/// Streaming activo: connection (para set_volume) + capture + hilo bombeador
-/// + guard del heartbeat (al dropearse, aborta la tarea de feedback RTSP).
-struct ActiveStream {
+/// Each receiver owns its RTSP connection and feedback task. All receivers in
+/// an active stream share one system-audio capture and one pump.
+struct ActiveOutput {
     connection: std::sync::Arc<tokio::sync::Mutex<cap_core::streaming::Connection>>,
     _heartbeat: cap_core::streaming::HeartbeatGuard,
-    _capture: Box<dyn audio_capture::Capture>,
-    pump: Option<std::thread::JoinHandle<()>>,
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ip: String,
     port: u16,
     name: String,
     volume: f32,
+}
+
+impl ActiveOutput {
+    fn info(&self, sample_rate: u32, channels: u8) -> StreamingInfo {
+        StreamingInfo {
+            ip: self.ip.clone(),
+            port: self.port,
+            name: self.name.clone(),
+            sample_rate,
+            channels,
+            volume: self.volume,
+        }
+    }
+}
+
+struct ActiveStream {
+    outputs: HashMap<String, ActiveOutput>,
+    senders: std::sync::Arc<Mutex<HashMap<String, cap_core::streaming::LiveFrameSender>>>,
+    _capture: Box<dyn audio_capture::Capture>,
+    pump: Option<std::thread::JoinHandle<()>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     latency_ms: u32,
     sample_rate: u32,
     channels: u8,
@@ -178,6 +197,10 @@ impl Drop for ActiveStream {
 struct StreamingState {
     inner: tokio::sync::Mutex<Option<ActiveStream>>,
     last_latency_change: tokio::sync::Mutex<Option<Instant>>,
+}
+
+fn output_key(ip: &str, port: u16) -> String {
+    format!("{ip}:{port}")
 }
 
 #[tauri::command]
@@ -248,14 +271,116 @@ async fn stop_discovery_stream(state: State<'_, DiscoveryState>) -> Result<(), S
 #[derive(serde::Serialize, Clone)]
 struct StreamingInfo {
     ip: String,
+    port: u16,
     name: String,
     sample_rate: u32,
     channels: u8,
     volume: f32,
 }
 
-/// Arranca captura del audio del sistema y la envía al HomePod indicado.
-/// Si había un streaming activo, lo para antes de abrir el nuevo.
+async fn open_output(
+    ip: &str,
+    port: u16,
+    name: &str,
+    volume: f32,
+    latency_ms: u32,
+) -> Result<(ActiveOutput, cap_core::streaming::LiveFrameSender, u32, u8), String> {
+    use cap_core::streaming::open_live_stream;
+    let parsed: IpAddr = ip.parse().map_err(|e| format!("IP inválida: {e}"))?;
+    let descriptor = DeviceDescriptor {
+        ip: parsed,
+        port,
+        name: name.to_string(),
+        mac: None,
+        model: None,
+        features: None,
+    };
+    let handle = open_live_stream(descriptor, Some(volume), Some(latency_ms))
+        .await
+        .map_err(|e| format!("stream: {e}"))?;
+    let (sender, connection, heartbeat, sample_rate, channels) = handle.into_parts();
+    Ok((
+        ActiveOutput {
+            connection,
+            _heartbeat: heartbeat,
+            ip: parsed.to_string(),
+            port,
+            name: name.to_string(),
+            volume,
+        },
+        sender,
+        sample_rate,
+        channels,
+    ))
+}
+
+/// Prepare a complete replacement while the previous stream keeps playing.
+/// This also makes a failed target switch leave the original receiver intact.
+async fn prepare_stream(
+    app: tauri::AppHandle,
+    targets: &[(String, u16, String, f32)],
+    latency_ms: u32,
+) -> Result<ActiveStream, String> {
+    use audio_capture::CaptureFormat;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
+    let (capture, rx) = audio_capture::start_loopback(CaptureFormat::AIRPLAY_DEFAULT)
+        .map_err(|e| format!("captura: {e}"))?;
+    let (first_ip, first_port, first_name, first_volume) =
+        targets.first().ok_or("no hay receptores".to_string())?;
+    let (first, sender, sample_rate, channels) =
+        open_output(first_ip, *first_port, first_name, *first_volume, latency_ms).await?;
+    let key = output_key(&first.ip, first.port);
+    let outputs = HashMap::from([(key.clone(), first)]);
+    let sender_map = HashMap::from([(key, sender)]);
+    let senders = Arc::new(Mutex::new(sender_map));
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = stop.clone();
+    let app_pump = app.clone();
+    let pump_senders = senders.clone();
+    let pump = std::thread::Builder::new()
+        .name("airplay-pump".into())
+        .spawn(move || {
+            pump_loop(
+                app_pump,
+                rx,
+                pump_senders,
+                sample_rate,
+                channels,
+                stop_thread,
+            )
+        })
+        .map_err(|e| format!("pump thread: {e}"))?;
+    let mut active = ActiveStream {
+        outputs,
+        senders,
+        _capture: capture,
+        pump: Some(pump),
+        stop,
+        latency_ms,
+        sample_rate,
+        channels,
+    };
+    // Start forwarding as soon as the first receiver is ready. Pairing a
+    // second receiver can take seconds; the first must not starve meanwhile.
+    for (ip, port, name, volume) in targets.iter().skip(1) {
+        let (output, sender, rate, channel_count) =
+            open_output(ip, *port, name, *volume, latency_ms).await?;
+        if (rate, channel_count) != (sample_rate, channels) {
+            return Err("los receptores no comparten formato de audio".to_string());
+        }
+        let key = output_key(&output.ip, output.port);
+        active
+            .senders
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(key.clone(), sender);
+        active.outputs.insert(key, output);
+    }
+    Ok(active)
+}
+
 #[tauri::command]
 async fn start_streaming(
     app: tauri::AppHandle,
@@ -266,86 +391,87 @@ async fn start_streaming(
     latency_ms: Option<u32>,
     state: State<'_, StreamingState>,
 ) -> Result<StreamingInfo, String> {
-    use audio_capture::CaptureFormat;
-    use cap_core::streaming::open_live_stream;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
-
-    let parsed: std::net::IpAddr = ip.parse().map_err(|e| format!("IP inválida: {e}"))?;
+    let parsed: IpAddr = ip.parse().map_err(|e| format!("IP inválida: {e}"))?;
     let port = port.unwrap_or(7000);
-    let display_name = name.clone().unwrap_or_else(|| format!("HomePod {parsed}"));
+    let name = name.unwrap_or_else(|| format!("HomePod {parsed}"));
+    let volume = volume
+        .unwrap_or(cap_core::streaming::DEFAULT_INITIAL_VOLUME)
+        .clamp(0.0, 1.0);
     let latency_ms = latency_ms.unwrap_or(cap_core::streaming::DEFAULT_LATENCY_MS);
-    cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
+    let mut slot = state.inner.lock().await;
+    let active =
+        prepare_stream(app, &[(parsed.to_string(), port, name, volume)], latency_ms).await?;
+    let info = active
+        .outputs
+        .values()
+        .next()
+        .unwrap()
+        .info(active.sample_rate, active.channels);
+    if let Some(mut previous) = slot.replace(active) {
+        previous.shutdown();
+    }
+    Ok(info)
+}
 
-    // Cerrar cualquier stream previo.
-    {
-        let mut slot = state.inner.lock().await;
-        if let Some(mut prev) = slot.take() {
-            prev.shutdown();
+/// Add a receiver to the existing capture without interrupting other outputs.
+#[tauri::command]
+async fn add_streaming(
+    app: tauri::AppHandle,
+    ip: String,
+    port: Option<u16>,
+    name: Option<String>,
+    volume: Option<f32>,
+    latency_ms: Option<u32>,
+    state: State<'_, StreamingState>,
+) -> Result<StreamingInfo, String> {
+    let parsed: IpAddr = ip.parse().map_err(|e| format!("IP inválida: {e}"))?;
+    let port = port.unwrap_or(7000);
+    let name = name.unwrap_or_else(|| format!("HomePod {parsed}"));
+    let volume = volume
+        .unwrap_or(cap_core::streaming::DEFAULT_INITIAL_VOLUME)
+        .clamp(0.0, 1.0);
+    let mut slot = state.inner.lock().await;
+    let Some(active) = slot.as_mut() else {
+        let latency = latency_ms.unwrap_or(cap_core::streaming::DEFAULT_LATENCY_MS);
+        let stream =
+            prepare_stream(app, &[(parsed.to_string(), port, name, volume)], latency).await?;
+        let info = stream
+            .outputs
+            .values()
+            .next()
+            .unwrap()
+            .info(stream.sample_rate, stream.channels);
+        *slot = Some(stream);
+        return Ok(info);
+    };
+    if let Some(requested) = latency_ms {
+        if requested != active.latency_ms {
+            return Err("la latencia no coincide con la reproducción actual".to_string());
         }
     }
-
-    // Captura del sistema.
-    let (capture, rx) = audio_capture::start_loopback(CaptureFormat::AIRPLAY_DEFAULT)
-        .map_err(|e| format!("captura: {e}"))?;
-
-    // Pair + setup + start_streaming_live + set volumen.
-    let descriptor = DeviceDescriptor {
-        ip: parsed,
-        port,
-        name: display_name.clone(),
-        mac: None,
-        model: None,
-        features: None,
-    };
-    let stream_handle = open_live_stream(descriptor, volume, Some(latency_ms))
-        .await
-        .map_err(|e| format!("stream: {e}"))?;
-    let (sender, connection, heartbeat, sample_rate, channels) = stream_handle.into_parts();
-
-    // Hilo bombeador. Le pasamos un clone del AppHandle para que pueda emitir
-    // `airplay://error` si la captura muere inesperadamente (device removed,
-    // parec/wasapi cierra el canal, etc.) — la UI lo escucha y muestra toast.
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_thread = stop.clone();
-    let app_pump = app.clone();
-    let pump = std::thread::Builder::new()
-        .name("airplay-pump".into())
-        .spawn(move || pump_loop(app_pump, rx, sender, sample_rate, channels, stop_thread))
-        .map_err(|e| format!("pump thread: {e}"))?;
-
-    let active = ActiveStream {
-        connection,
-        _heartbeat: heartbeat,
-        _capture: capture,
-        pump: Some(pump),
-        stop,
-        ip: parsed.to_string(),
-        port,
-        name: display_name.clone(),
-        volume: volume.unwrap_or(cap_core::streaming::DEFAULT_INITIAL_VOLUME),
-        latency_ms,
-        sample_rate,
-        channels,
-    };
-    let info = StreamingInfo {
-        ip: active.ip.clone(),
-        name: display_name,
-        sample_rate,
-        channels,
-        volume: active.volume,
-    };
-
-    let mut slot = state.inner.lock().await;
-    *slot = Some(active);
-
+    let key = output_key(&parsed.to_string(), port);
+    if let Some(output) = active.outputs.get(&key) {
+        return Ok(output.info(active.sample_rate, active.channels));
+    }
+    let (output, sender, sample_rate, channels) =
+        open_output(&parsed.to_string(), port, &name, volume, active.latency_ms).await?;
+    if (sample_rate, channels) != (active.sample_rate, active.channels) {
+        return Err("los receptores no comparten formato de audio".to_string());
+    }
+    let info = output.info(sample_rate, channels);
+    active
+        .senders
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(key.clone(), sender);
+    active.outputs.insert(key, output);
     Ok(info)
 }
 
 fn pump_loop(
     app: tauri::AppHandle,
     rx: crossbeam_channel::Receiver<audio_capture::CapturedFrame>,
-    sender: cap_core::streaming::LiveFrameSender,
+    senders: std::sync::Arc<Mutex<HashMap<String, cap_core::streaming::LiveFrameSender>>>,
     sample_rate: u32,
     channels: u8,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -367,14 +493,27 @@ fn pump_loop(
                 let now = Instant::now();
                 max_capture_gap = max_capture_gap.max(now.saturating_duration_since(last_frame));
                 last_frame = now;
-                if !sender.try_send(LivePcmFrame {
-                    samples: frame.samples,
-                    channels,
-                    sample_rate,
-                }) {
-                    frames_dropped += 1;
-                } else {
-                    frames_forwarded += 1;
+                let Ok(targets) = senders.lock() else {
+                    unexpected_exit = true;
+                    break;
+                };
+                let mut samples = Some(frame.samples);
+                let count = targets.len();
+                for (index, sender) in targets.values().enumerate() {
+                    let payload = if index + 1 == count {
+                        samples.take().unwrap()
+                    } else {
+                        samples.as_ref().unwrap().clone()
+                    };
+                    if !sender.try_send(LivePcmFrame {
+                        samples: payload,
+                        channels,
+                        sample_rate,
+                    }) {
+                        frames_dropped += 1;
+                    } else {
+                        frames_forwarded += 1;
+                    }
                 }
 
                 if last_report.elapsed() >= AUDIO_DIAGNOSTICS_INTERVAL {
@@ -415,28 +554,75 @@ async fn stop_streaming(state: State<'_, StreamingState>) -> Result<(), String> 
 }
 
 #[tauri::command]
+async fn remove_streaming(
+    ip: String,
+    port: u16,
+    state: State<'_, StreamingState>,
+) -> Result<(), String> {
+    let mut slot = state.inner.lock().await;
+    let Some(active) = slot.as_mut() else {
+        return Ok(());
+    };
+    let key = output_key(&ip, port);
+    active
+        .senders
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&key);
+    active.outputs.remove(&key);
+    if active.outputs.is_empty() {
+        if let Some(mut empty) = slot.take() {
+            empty.shutdown();
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn set_stream_volume(volume: f32, state: State<'_, StreamingState>) -> Result<f32, String> {
     let mut slot = state.inner.lock().await;
     let active = slot
         .as_mut()
         .ok_or_else(|| "no hay streaming activo".to_string())?;
     let v = volume.clamp(0.0, 1.0);
-    let mut conn = active.connection.lock().await;
-    conn.set_volume(v).await.map_err(|e| e.to_string())?;
-    active.volume = v;
-    Ok(v)
+    let mut errors = Vec::new();
+    for output in active.outputs.values_mut() {
+        let mut conn = output.connection.lock().await;
+        match conn.set_volume(v).await {
+            Ok(()) => output.volume = v,
+            Err(error) => errors.push(format!("{}: {error}", output.name)),
+        }
+    }
+    if errors.is_empty() {
+        Ok(v)
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 #[tauri::command]
 async fn is_streaming(state: State<'_, StreamingState>) -> Result<Option<StreamingInfo>, String> {
     let slot = state.inner.lock().await;
-    Ok(slot.as_ref().map(|a| StreamingInfo {
-        ip: a.ip.clone(),
-        name: a.name.clone(),
-        sample_rate: a.sample_rate,
-        channels: a.channels,
-        volume: a.volume,
+    Ok(slot.as_ref().and_then(|a| {
+        a.outputs
+            .values()
+            .next()
+            .map(|o| o.info(a.sample_rate, a.channels))
     }))
+}
+
+#[tauri::command]
+async fn list_streaming(state: State<'_, StreamingState>) -> Result<Vec<StreamingInfo>, String> {
+    let slot = state.inner.lock().await;
+    Ok(slot
+        .as_ref()
+        .map(|a| {
+            a.outputs
+                .values()
+                .map(|o| o.info(a.sample_rate, a.channels))
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 #[derive(serde::Serialize)]
@@ -468,17 +654,11 @@ async fn connect_device(
         features: None,
     };
 
-    // Si ya había una sesión previa, la soltamos antes de abrir otra.
-    {
-        let mut slot = state.inner.lock().await;
-        *slot = None;
-    }
-
+    // Keep the previous pairing until the new target succeeds.
+    let mut slot = state.inner.lock().await;
     let session = pair_homepod(descriptor)
         .await
         .map_err(|e| format!("pairing falló: {e}"))?;
-
-    let mut slot = state.inner.lock().await;
     *slot = Some(session);
 
     Ok(ConnectionInfo {
@@ -608,6 +788,23 @@ fn get_volume(app: tauri::AppHandle) -> Result<Option<f32>, String> {
     }
 }
 
+#[tauri::command]
+fn save_multi_device(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(KEY_MULTI_DEVICE, serde_json::json!(enabled));
+    store.save().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_multi_device(app: tauri::AppHandle) -> Result<bool, String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    Ok(store
+        .get(KEY_MULTI_DEVICE)
+        .as_ref()
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false))
+}
+
 fn save_latency(app: &tauri::AppHandle, latency_ms: u32) -> Result<(), String> {
     cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
@@ -659,49 +856,47 @@ async fn confirm_latency(
         return Ok(false);
     }
 
-    let active = {
-        let slot = state.inner.lock().await;
-        slot.as_ref().map(|stream| {
-            (
-                stream.ip.clone(),
-                stream.port,
-                stream.name.clone(),
-                stream.volume,
-                stream.latency_ms,
-            )
-        })
-    };
-
-    save_latency(&app, latency_ms)?;
-    if let Some((ip, port, name, volume, old_latency_ms)) = active.as_ref() {
-        if let Err(error) = start_streaming(
-            app.clone(),
-            ip.clone(),
-            Some(*port),
-            Some(name.clone()),
-            Some(*volume),
-            Some(latency_ms),
-            state.clone(),
-        )
-        .await
-        {
-            let _ = save_latency(&app, previous);
-            let _ = start_streaming(
-                app,
-                ip.clone(),
-                Some(*port),
-                Some(name.clone()),
-                Some(*volume),
-                Some(*old_latency_ms),
-                state.clone(),
-            )
-            .await;
+    let mut slot = state.inner.lock().await;
+    let restarted = if let Some(mut stream) = slot.take() {
+        let targets = stream
+            .outputs
+            .values()
+            .map(|output| {
+                (
+                    output.ip.clone(),
+                    output.port,
+                    output.name.clone(),
+                    output.volume,
+                )
+            })
+            .collect::<Vec<_>>();
+        let old_latency_ms = stream.latency_ms;
+        if let Err(error) = save_latency(&app, latency_ms) {
+            *slot = Some(stream);
             return Err(error);
         }
-    }
+        // A receiver may reject a second RTSP session to itself. Close the old
+        // sessions before reopening them, then restore the old setup on error.
+        stream.shutdown();
+        drop(stream);
+        match prepare_stream(app.clone(), &targets, latency_ms).await {
+            Ok(replacement) => *slot = Some(replacement),
+            Err(error) => {
+                let _ = save_latency(&app, previous);
+                if let Ok(restored) = prepare_stream(app, &targets, old_latency_ms).await {
+                    *slot = Some(restored);
+                }
+                return Err(error);
+            }
+        }
+        true
+    } else {
+        save_latency(&app, latency_ms)?;
+        false
+    };
 
     *changed = Some(Instant::now());
-    Ok(active.is_some())
+    Ok(restarted)
 }
 
 // ── System tray (C3) ─────────────────────────────────────────────────────────
@@ -916,14 +1111,19 @@ pub fn run() {
             disconnect_device,
             is_connected,
             start_streaming,
+            add_streaming,
+            remove_streaming,
             stop_streaming,
             set_stream_volume,
             is_streaming,
+            list_streaming,
             save_last_device,
             get_last_device,
             clear_last_device,
             save_volume,
             get_volume,
+            save_multi_device,
+            get_multi_device,
             get_latency,
             get_latency_cooldown_ms,
             confirm_latency,
