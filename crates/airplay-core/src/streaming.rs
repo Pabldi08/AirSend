@@ -437,6 +437,8 @@ mod tests {
         );
         assert_eq!(latency_frames(1000).unwrap(), (11_025, 44_100));
         assert_eq!(latency_frames(MIN_LATENCY_MS).unwrap(), (0, 0));
+        let zero_config = streaming_stream_config(0).unwrap();
+        assert_eq!((zero_config.latency_min, zero_config.latency_max), (0, 0));
         assert_eq!(latency_frames(200).unwrap(), (4_410, 8_820));
         for invalid in [1, 199, 250, 3100] {
             assert!(latency_frames(invalid).is_err());

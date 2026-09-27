@@ -28,6 +28,7 @@ const ES: Dict = {
   latency_applying: "Aplicando…",
   latency_cooldown: "Disponible en {seconds} s",
   latency_error: "No se pudo aplicar la latencia: {err}",
+  capture_interrupted: "La captura de audio se interrumpió (dispositivo desconectado o fallo del controlador)",
   manual_summary: "¿No aparece tu HomePod? Añade su IP y puerto manualmente",
   manual_hint:
     "Puedes usar una IP o IP:puerto, por ejemplo 192.168.1.50:7453. Para IPv6 con puerto usa [dirección]:puerto.",
@@ -72,6 +73,7 @@ const EN: Dict = {
   latency_applying: "Applying…",
   latency_cooldown: "Available in {seconds} s",
   latency_error: "Could not apply latency: {err}",
+  capture_interrupted: "Audio capture stopped (device disconnected or driver failed)",
   manual_summary: "Can't see your HomePod? Add its IP and port manually",
   manual_hint:
     "Enter an IP or IP:port, for example 192.168.1.50:7453. Use [address]:port for IPv6.",

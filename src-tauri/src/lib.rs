@@ -399,10 +399,7 @@ fn pump_loop(
     }
     if unexpected_exit {
         tracing::warn!("airplay-pump: canal captura cerrado inesperadamente, emitiendo error");
-        let _ = app.emit(
-            "airplay://error",
-            "captura del audio interrumpida (dispositivo desconectado o driver caído)",
-        );
+        let _ = app.emit("airplay://error", "capture_interrupted");
     } else {
         tracing::info!("airplay-pump thread exit");
     }

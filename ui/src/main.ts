@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { groupDevices, routesFor, type Device, type DeviceKind } from "./devices";
 import {
   applyStaticTranslations,
   getLang,
@@ -7,21 +8,6 @@ import {
   t,
   toggleLang,
 } from "./i18n";
-
-type DeviceKind = "homepod" | "appletv" | "airportexpress" | "otherairplay";
-
-interface Device {
-  id: string;
-  hardware_id: string | null;
-  name: string;
-  host: string;
-  addresses: string[];
-  port: number;
-  kind: DeviceKind;
-  model: string | null;
-  features: string | null;
-  supports_airplay2: boolean;
-}
 
 const KIND_LABEL: Record<DeviceKind, string> = {
   homepod: "HomePod",
@@ -51,10 +37,11 @@ function showToast(msg: string, durationMs = 5000) {
 // La función se llama al final del archivo, una vez declarados `playing` y demás.
 function setupAsyncErrorListener() {
   void listen<string>("airplay://error", (event) => {
-    showToast(event.payload);
+    const message = event.payload === "capture_interrupted" ? t("capture_interrupted") : event.payload;
+    showToast(message);
     if (playing) {
       playing = false;
-      playerStatus.textContent = t("error_prefix", { err: event.payload });
+      playerStatus.textContent = t("error_prefix", { err: message });
       updatePlayerUi();
     }
   });
@@ -80,7 +67,7 @@ async function connect(device: Device) {
   try {
     let lastError: unknown = new Error("dispositivo sin dirección IP");
     let route: Device | null = null;
-    for (const candidate of routesFor(device)) {
+    for (const candidate of routesFor(discovered, device)) {
       const ip = candidate.addresses.find((a) => !a.includes(":")) ?? candidate.addresses[0];
       if (!ip) continue;
       try {
@@ -156,7 +143,7 @@ async function startPlay() {
     const vol = Number(volumeSlider.value) / 100;
     let lastError: unknown = new Error("dispositivo sin dirección IP");
     let activeRoute: Device | null = null;
-    for (const route of routesFor(dev, connectedRoute)) {
+    for (const route of routesFor(discovered, dev, connectedRoute)) {
       const ip = route.addresses.find((a) => !a.includes(":")) ?? route.addresses[0];
       if (!ip) continue;
       try {
@@ -328,61 +315,9 @@ function render() {
   updatePlayerUi();
 }
 
-function isRaop(device: Device): boolean {
-  return device.id.toLowerCase().includes("._raop._tcp.");
-}
-
-function isAirPlay(device: Device): boolean {
-  return device.id.toLowerCase().includes("._airplay._tcp.");
-}
-
-function displayName(device: Device): string {
-  return isRaop(device) ? device.name.replace(/^[0-9a-f:-]{12,17}@/i, "") : device.name;
-}
-
-function deviceGroupKey(device: Device): string {
-  if (!isRaop(device) && !isAirPlay(device)) return device.id;
-  if (device.hardware_id) return `hardware:${device.hardware_id}`;
-  return `host:${device.host.toLowerCase()}|${displayName(device).toLowerCase()}`;
-}
-
-function routesFor(device: Device, first: Device | null = null): Device[] {
-  const routes = [...discovered.values()].filter((candidate) => deviceGroupKey(candidate) === device.id);
-  if (routes.length === 0) return [device];
-  routes.sort((a, b) => {
-    const preference = device.kind === "homepod" ? isAirPlay : isRaop;
-    return Number(preference(b)) - Number(preference(a));
-  });
-  if (first) routes.sort((a, b) => Number(b.id === first.id) - Number(a.id === first.id));
-  return routes;
-}
-
 function refreshKnownDevices() {
   known.clear();
-  const groups = new Map<string, Device[]>();
-  for (const device of discovered.values()) {
-    const key = deviceGroupKey(device);
-    const group = groups.get(key) ?? [];
-    group.push(device);
-    groups.set(key, group);
-  }
-  for (const [key, group] of groups) {
-    // RAOP is the working transport for receivers that advertise both
-    // services; AirPlay carries the human-friendly name and device type.
-    const presentation = group.find(isAirPlay) ?? group[0];
-    const transport = presentation.kind === "homepod"
-      ? group.find(isAirPlay) ?? group[0]
-      : group.find(isRaop) ?? group[0];
-    known.set(key, {
-      ...transport,
-      id: key,
-      name: displayName(presentation),
-      kind: presentation.kind,
-      model: presentation.model ?? transport.model,
-      features: transport.features ?? presentation.features,
-      supports_airplay2: group.some((device) => device.supports_airplay2),
-    });
-  }
+  for (const [key, device] of groupDevices(discovered)) known.set(key, device);
 }
 
 function escape(s: string): string {
@@ -595,7 +530,7 @@ async function bootstrap() {
   // sin uso real) y vamos directo a streaming, marcando connectedId para que
   // startPlay y el resto de la UI lo traten como activo.
   connectedId = found.id;
-  connectedRoute = routesFor(found).find((route) =>
+  connectedRoute = routesFor(discovered, found).find((route) =>
     route.port === last!.port && route.addresses.includes(last!.ip)
   ) ?? null;
   render();
