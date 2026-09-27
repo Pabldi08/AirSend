@@ -106,10 +106,17 @@ const playBtn = document.getElementById("play-stop") as HTMLButtonElement;
 const playerStatus = document.getElementById("player-status") as HTMLSpanElement;
 const volumeSlider = document.getElementById("volume") as HTMLInputElement;
 const volumeOut = document.getElementById("vol-out") as HTMLOutputElement;
-const latencySelect = document.getElementById("latency") as HTMLSelectElement;
+const latencySlider = document.getElementById("latency") as HTMLInputElement;
+const latencyOut = document.getElementById("latency-out") as HTMLOutputElement;
+const latencyConfirm = document.getElementById("latency-confirm") as HTMLButtonElement;
+const latencyStatus = document.getElementById("latency-status") as HTMLSpanElement;
 
 let playing = false;
 let volumeDebounce: number | null = null;
+let confirmedLatencyMs = 3000;
+let latencyApplying = false;
+let latencyCooldownUntil = 0;
+let latencyTimer: number | null = null;
 
 function updatePlayerUi() {
   const dev = connectedId ? known.get(connectedId) : null;
@@ -133,20 +140,18 @@ async function startPlay() {
   playerStatus.textContent = t("player_starting");
   try {
     const vol = Number(volumeSlider.value) / 100;
-    const latency = latencySelect.value;
     await invoke("start_streaming", {
       ip,
       port: dev.port,
       name: dev.name,
       volume: vol,
-      latency,
+      latencyMs: confirmedLatencyMs,
     });
     playing = true;
     playerStatus.textContent = t("player_playing");
     // Persistimos para auto-reconnect (C2) y carga rápida en futuros arranques.
     void invoke("save_last_device", { ip, port: dev.port, name: dev.name });
     void invoke("save_volume", { volume: vol });
-    void invoke("save_latency", { latency });
   } catch (err) {
     playerStatus.textContent = t("error_prefix", { err: String(err) });
   } finally {
@@ -189,13 +194,62 @@ volumeSlider.addEventListener("input", () => {
   }, 120);
 });
 
-latencySelect.addEventListener("change", () => {
-  const latency = latencySelect.value;
-  // Persistimos siempre para recordar la preferencia en el próximo arranque.
-  void invoke("save_latency", { latency });
-  // La latencia se negocia con el HomePod al abrir el stream, así que un cambio
-  // en caliente no surte efecto hasta el próximo Play. Avisamos al usuario.
-  if (playing) showToast(t("latency_hint"));
+function refreshLatencyUi() {
+  const pending = Number(latencySlider.value);
+  const cooldownMs = Math.max(0, latencyCooldownUntil - Date.now());
+  latencyOut.value = `${pending} ms`;
+  latencyConfirm.disabled = latencyApplying || cooldownMs > 0 || pending === confirmedLatencyMs;
+  if (latencyApplying) latencyStatus.textContent = t("latency_applying");
+  else if (cooldownMs > 0)
+    latencyStatus.textContent = t("latency_cooldown", { seconds: Math.ceil(cooldownMs / 1000) });
+  else latencyStatus.textContent = t(pending === confirmedLatencyMs ? "latency_current" : "latency_pending");
+}
+
+function setLatencyCooldown(ms: number) {
+  latencyCooldownUntil = Date.now() + ms;
+  if (latencyTimer !== null) clearInterval(latencyTimer);
+  latencyTimer = window.setInterval(() => {
+    refreshLatencyUi();
+    if (Date.now() >= latencyCooldownUntil && latencyTimer !== null) {
+      clearInterval(latencyTimer);
+      latencyTimer = null;
+    }
+  }, 250);
+  refreshLatencyUi();
+}
+
+latencySlider.addEventListener("input", refreshLatencyUi);
+latencyConfirm.addEventListener("click", async () => {
+  const latencyMs = Number(latencySlider.value);
+  if (latencyApplying || Date.now() < latencyCooldownUntil || latencyMs === confirmedLatencyMs) return;
+  latencyApplying = true;
+  playBtn.disabled = true;
+  refreshLatencyUi();
+  try {
+    const restarted = await invoke<boolean>("confirm_latency", { latencyMs });
+    confirmedLatencyMs = latencyMs;
+    if (restarted) {
+      playing = true;
+      playerStatus.textContent = t("player_playing");
+    }
+    setLatencyCooldown(10_000);
+  } catch (err) {
+    const message = String(err);
+    const cooldown = /^latency_cooldown:(\d+)$/.exec(message);
+    if (cooldown) setLatencyCooldown(Number(cooldown[1]));
+    else showToast(t("latency_error", { err: message }));
+    try {
+      playing = (await invoke<ConnectionInfo | null>("is_streaming")) !== null;
+      playerStatus.textContent = playing ? t("player_playing") : "";
+    } catch {
+      // Keep the previous UI state if the status query itself fails.
+    }
+  } finally {
+    latencyApplying = false;
+    playBtn.disabled = false;
+    refreshLatencyUi();
+    updatePlayerUi();
+  }
 });
 
 function render() {
@@ -318,21 +372,33 @@ manualIpInput.addEventListener("keydown", (e) => {
 
 setupAsyncErrorListener();
 setupLangToggle();
-void preloadSavedVolume();
-void preloadSavedLatency();
-void bootstrap();
+void initialize();
+
+async function initialize() {
+  await Promise.all([preloadSavedVolume(), preloadSavedLatency()]);
+  await bootstrap();
+}
 
 function setupLangToggle() {
   const btn = document.getElementById("lang-toggle") as HTMLButtonElement | null;
   applyStaticTranslations();
   refreshLangToggleLabel();
+  syncTrayLanguage(getLang());
   onLangChange(() => {
     refreshLangToggleLabel();
+    syncTrayLanguage(getLang());
     // Re-render lo que tiene texto dinámico generado por JS.
     render();
     updatePlayerUi();
+    refreshLatencyUi();
   });
   if (btn) btn.addEventListener("click", () => toggleLang());
+}
+
+function syncTrayLanguage(lang: "es" | "en") {
+  void invoke("set_tray_language", { lang }).catch((err) => {
+    console.error("Could not update tray language", err);
+  });
 }
 
 function refreshLangToggleLabel() {
@@ -359,13 +425,19 @@ async function preloadSavedVolume() {
 
 async function preloadSavedLatency() {
   try {
-    const v = await invoke<string | null>("get_latency");
-    if (v === "music" || v === "video" || v === "gaming") {
-      latencySelect.value = v;
+    const [saved, cooldownMs] = await Promise.all([
+      invoke<number | null>("get_latency"),
+      invoke<number>("get_latency_cooldown_ms"),
+    ]);
+    if (saved !== null && saved >= 200 && saved <= 3000) {
+      confirmedLatencyMs = saved;
+      latencySlider.value = String(saved);
     }
+    if (cooldownMs > 0) setLatencyCooldown(cooldownMs);
   } catch {
-    // sin preferencia guardada, se queda el default del HTML ("music").
+    // Keep the safe default when no setting has been stored yet.
   }
+  refreshLatencyUi();
 }
 
 interface PersistedDevice {

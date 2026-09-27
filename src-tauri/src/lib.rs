@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cap_core::{
     browse_once,
@@ -9,7 +9,7 @@ use cap_core::{
     probe::{manual_device, parse_manual_endpoint},
     probe_airplay, Device, Discovery,
 };
-use tauri::menu::{MenuBuilder, MenuItemBuilder};
+use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State, WindowEvent};
 use tauri_plugin_store::StoreExt;
@@ -22,6 +22,40 @@ const KEY_LAST_DEVICE: &str = "last_device";
 const KEY_VOLUME: &str = "volume";
 const KEY_LATENCY: &str = "latency";
 const AUDIO_DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(10);
+const LATENCY_CHANGE_COOLDOWN: Duration = Duration::from_secs(10);
+
+fn latency_cooldown_remaining(last_change: Option<Instant>, now: Instant) -> Duration {
+    last_change
+        .map(|at| LATENCY_CHANGE_COOLDOWN.saturating_sub(now.saturating_duration_since(at)))
+        .unwrap_or(Duration::ZERO)
+}
+
+#[cfg(test)]
+mod latency_tests {
+    use super::*;
+
+    #[test]
+    fn changes_unlock_after_ten_seconds() {
+        let changed_at = Instant::now();
+        assert_eq!(
+            latency_cooldown_remaining(Some(changed_at), changed_at + Duration::from_secs(9)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            latency_cooldown_remaining(Some(changed_at), changed_at + Duration::from_secs(10)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn older_latency_settings_survive_the_slider_upgrade() {
+        assert_eq!(decode_latency(&serde_json::json!("music")), Some(3000));
+        assert_eq!(decode_latency(&serde_json::json!("video")), Some(2000));
+        assert_eq!(decode_latency(&serde_json::json!("gaming")), Some(1000));
+        assert_eq!(decode_latency(&serde_json::json!(700)), Some(700));
+        assert_eq!(decode_latency(&serde_json::json!(750)), None);
+    }
+}
 
 #[cfg(windows)]
 struct MmcssGuard(*mut std::ffi::c_void);
@@ -116,6 +150,10 @@ struct ActiveStream {
     pump: Option<std::thread::JoinHandle<()>>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ip: String,
+    port: u16,
+    name: String,
+    volume: f32,
+    latency_ms: u32,
     sample_rate: u32,
     channels: u8,
 }
@@ -139,6 +177,7 @@ impl Drop for ActiveStream {
 #[derive(Default)]
 struct StreamingState {
     inner: tokio::sync::Mutex<Option<ActiveStream>>,
+    last_latency_change: tokio::sync::Mutex<Option<Instant>>,
 }
 
 #[tauri::command]
@@ -224,7 +263,7 @@ async fn start_streaming(
     port: Option<u16>,
     name: Option<String>,
     volume: Option<f32>,
-    latency: Option<cap_core::streaming::LatencyProfile>,
+    latency_ms: Option<u32>,
     state: State<'_, StreamingState>,
 ) -> Result<StreamingInfo, String> {
     use audio_capture::CaptureFormat;
@@ -235,6 +274,8 @@ async fn start_streaming(
     let parsed: std::net::IpAddr = ip.parse().map_err(|e| format!("IP inválida: {e}"))?;
     let port = port.unwrap_or(7000);
     let display_name = name.clone().unwrap_or_else(|| format!("HomePod {parsed}"));
+    let latency_ms = latency_ms.unwrap_or(cap_core::streaming::DEFAULT_LATENCY_MS);
+    cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
 
     // Cerrar cualquier stream previo.
     {
@@ -257,7 +298,7 @@ async fn start_streaming(
         model: None,
         features: None,
     };
-    let stream_handle = open_live_stream(descriptor, volume, latency)
+    let stream_handle = open_live_stream(descriptor, volume, Some(latency_ms))
         .await
         .map_err(|e| format!("stream: {e}"))?;
     let (sender, connection, heartbeat, sample_rate, channels) = stream_handle.into_parts();
@@ -280,6 +321,10 @@ async fn start_streaming(
         pump: Some(pump),
         stop,
         ip: parsed.to_string(),
+        port,
+        name: display_name.clone(),
+        volume: volume.unwrap_or(cap_core::streaming::DEFAULT_INITIAL_VOLUME),
+        latency_ms,
         sample_rate,
         channels,
     };
@@ -288,7 +333,7 @@ async fn start_streaming(
         name: display_name,
         sample_rate,
         channels,
-        volume: volume.unwrap_or(cap_core::streaming::DEFAULT_INITIAL_VOLUME),
+        volume: active.volume,
     };
 
     let mut slot = state.inner.lock().await;
@@ -381,6 +426,7 @@ async fn set_stream_volume(volume: f32, state: State<'_, StreamingState>) -> Res
     let v = volume.clamp(0.0, 1.0);
     let mut conn = active.connection.lock().await;
     conn.set_volume(v).await.map_err(|e| e.to_string())?;
+    active.volume = v;
     Ok(v)
 }
 
@@ -389,10 +435,10 @@ async fn is_streaming(state: State<'_, StreamingState>) -> Result<Option<Streami
     let slot = state.inner.lock().await;
     Ok(slot.as_ref().map(|a| StreamingInfo {
         ip: a.ip.clone(),
-        name: format!("HomePod {}", a.ip),
+        name: a.name.clone(),
         sample_rate: a.sample_rate,
         channels: a.channels,
-        volume: 0.0, // volumen actual no lo retenemos (TODO: cache)
+        volume: a.volume,
     }))
 }
 
@@ -565,32 +611,100 @@ fn get_volume(app: tauri::AppHandle) -> Result<Option<f32>, String> {
     }
 }
 
-#[tauri::command]
-fn save_latency(
-    app: tauri::AppHandle,
-    latency: cap_core::streaming::LatencyProfile,
-) -> Result<(), String> {
+fn save_latency(app: &tauri::AppHandle, latency_ms: u32) -> Result<(), String> {
+    cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
-    store.set(
-        KEY_LATENCY,
-        serde_json::to_value(latency).map_err(|e| e.to_string())?,
-    );
+    store.set(KEY_LATENCY, serde_json::json!(latency_ms));
     store.save().map_err(|e| e.to_string())?;
     Ok(())
 }
 
+fn decode_latency(value: &serde_json::Value) -> Option<u32> {
+    let latency_ms = match value.as_str() {
+        Some("music") => Some(3000),
+        Some("video") => Some(2000),
+        Some("gaming") => Some(1000),
+        Some(_) => None,
+        None => value.as_u64().and_then(|n| u32::try_from(n).ok()),
+    };
+    latency_ms.filter(|ms| cap_core::streaming::validate_latency_ms(*ms).is_ok())
+}
+
 #[tauri::command]
-fn get_latency(
-    app: tauri::AppHandle,
-) -> Result<Option<cap_core::streaming::LatencyProfile>, String> {
+fn get_latency(app: tauri::AppHandle) -> Result<Option<u32>, String> {
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
-    let value = store.get(KEY_LATENCY);
-    match value {
-        // Un valor corrupto/desconocido no debe romper el arranque: lo tratamos
-        // como "sin preferencia" y la UI cae al default (`music`).
-        Some(v) => Ok(serde_json::from_value(v).ok()),
-        None => Ok(None),
+    Ok(store.get(KEY_LATENCY).as_ref().and_then(decode_latency))
+}
+
+#[tauri::command]
+async fn get_latency_cooldown_ms(state: State<'_, StreamingState>) -> Result<u64, String> {
+    let changed = state.last_latency_change.lock().await;
+    Ok(latency_cooldown_remaining(*changed, Instant::now()).as_millis() as u64)
+}
+
+/// Confirm one negotiated buffer change at most every ten seconds. A live
+/// stream needs a fresh AirPlay SETUP, so restart it only after confirmation.
+#[tauri::command]
+async fn confirm_latency(
+    app: tauri::AppHandle,
+    latency_ms: u32,
+    state: State<'_, StreamingState>,
+) -> Result<bool, String> {
+    cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
+    let mut changed = state.last_latency_change.lock().await;
+    let remaining = latency_cooldown_remaining(*changed, Instant::now());
+    if !remaining.is_zero() {
+        return Err(format!("latency_cooldown:{}", remaining.as_millis()));
     }
+
+    let previous = get_latency(app.clone())?.unwrap_or(cap_core::streaming::DEFAULT_LATENCY_MS);
+    if previous == latency_ms {
+        return Ok(false);
+    }
+
+    let active = {
+        let slot = state.inner.lock().await;
+        slot.as_ref().map(|stream| {
+            (
+                stream.ip.clone(),
+                stream.port,
+                stream.name.clone(),
+                stream.volume,
+                stream.latency_ms,
+            )
+        })
+    };
+
+    save_latency(&app, latency_ms)?;
+    if let Some((ip, port, name, volume, old_latency_ms)) = active.as_ref() {
+        if let Err(error) = start_streaming(
+            app.clone(),
+            ip.clone(),
+            Some(*port),
+            Some(name.clone()),
+            Some(*volume),
+            Some(latency_ms),
+            state.clone(),
+        )
+        .await
+        {
+            let _ = save_latency(&app, previous);
+            let _ = start_streaming(
+                app,
+                ip.clone(),
+                Some(*port),
+                Some(name.clone()),
+                Some(*volume),
+                Some(*old_latency_ms),
+                state.clone(),
+            )
+            .await;
+            return Err(error);
+        }
+    }
+
+    *changed = Some(Instant::now());
+    Ok(active.is_some())
 }
 
 // ── System tray (C3) ─────────────────────────────────────────────────────────
@@ -599,7 +713,28 @@ fn get_latency(
 // proceso sigue (streaming continúa). Sólo "Salir" del menú o un kill mata el
 // daemon. Esto es lo esperado para una app de tipo "siempre disponible".
 
-fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+struct TrayItems {
+    show: MenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
+}
+
+fn tray_labels(lang: &str) -> Option<(&'static str, &'static str)> {
+    match lang {
+        "es" => Some(("Mostrar / ocultar ventana", "Salir")),
+        "en" => Some(("Show / hide window", "Quit")),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+fn set_tray_language(lang: String, state: State<'_, TrayItems>) -> Result<(), String> {
+    let (show, quit) = tray_labels(&lang).ok_or_else(|| "unsupported language".to_string())?;
+    state.show.set_text(show).map_err(|e| e.to_string())?;
+    state.quit.set_text(quit).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<TrayItems> {
     let show_item = MenuItemBuilder::with_id("show", "Mostrar / ocultar ventana").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Salir").build(app)?;
     let menu = MenuBuilder::new(app)
@@ -630,7 +765,10 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     }
     builder.build(app)?;
 
-    Ok(())
+    Ok(TrayItems {
+        show: show_item,
+        quit: quit_item,
+    })
 }
 
 fn toggle_main_window(app: &tauri::AppHandle) {
@@ -789,11 +927,14 @@ pub fn run() {
             clear_last_device,
             save_volume,
             get_volume,
-            save_latency,
             get_latency,
+            get_latency_cooldown_ms,
+            confirm_latency,
+            set_tray_language,
         ])
         .setup(|app| {
-            setup_tray(app.handle())?;
+            let tray_items = setup_tray(app.handle())?;
+            app.manage(tray_items);
 
             // Cerrar la ventana (X) la oculta en vez de matar el proceso —
             // la app sigue viva en el tray. "Salir" del menú del tray sí

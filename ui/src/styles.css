@@ -176,6 +176,59 @@ ul#devices {
   color: var(--fg);
 }
 
+.latency-control {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.latency-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.latency-label output {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.latency-control input[type="range"] {
+  display: block;
+  width: 100%;
+  margin: 11px 0 3px;
+  accent-color: var(--accent);
+}
+
+.latency-scale {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.latency-control .hint {
+  margin: 11px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.latency-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.latency-actions button {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 6px 11px;
+}
+
 details.manual {
   margin-top: 24px;
   padding: 12px 14px;
