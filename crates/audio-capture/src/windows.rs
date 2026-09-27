@@ -43,16 +43,12 @@ const EVENT_TIMEOUT_MS: u32 = 3_000;
 /// inactivo y empezar a inyectar silencio. Por debajo de esto es un hueco
 /// normal entre chunks (uno cada ~8 ms); por encima, que no hay nadie
 /// reproduciendo audio en el dispositivo por defecto.
-const SILENCE_AFTER_IDLE: Duration = Duration::from_millis(250);
+const SILENCE_AFTER_IDLE: Duration = Duration::from_millis(100);
 
 /// Intervalo de sondeo (ms) mientras inyectamos silencio. En ese modo el
 /// `wait_for_event` no va a llegar —el endpoint está parado y WASAPI no manda
 /// eventos—, así que despertamos a menudo para mantener el ritmo de los frames.
 const IDLE_POLL_MS: u32 = 8;
-
-/// Tope de chunks de silencio por iteración, para que un parón largo del hilo
-/// no se convierta en una ráfaga que dispare la latencia.
-const MAX_CATCHUP_CHUNKS: usize = 64;
 
 /// Como mucho un aviso de "sin eventos" cada este tiempo (si no, el log se
 /// llena a razón de uno cada 3 s durante todo un silencio).
@@ -135,7 +131,7 @@ impl Drop for WindowsCapture {
 pub fn start(
     fmt: CaptureFormat,
 ) -> Result<(Box<dyn Capture>, Receiver<CapturedFrame>), CaptureError> {
-    if fmt.channels != 2 {
+    if fmt.channels != 2 || fmt.sample_rate == 0 {
         return Err(CaptureError::UnsupportedConfig {
             wanted: fmt.sample_rate,
             channels: fmt.channels,
@@ -342,25 +338,25 @@ fn capture_thread_main(
         let idle = last_real_audio.elapsed() >= SILENCE_AFTER_IDLE;
         if idle {
             let now = Instant::now();
-            let mut t = silence_next;
-            let mut injected = 0usize;
-            while t <= now && injected < MAX_CATCHUP_CHUNKS {
-                match tx.try_send(CapturedFrame {
-                    samples: vec![0i16; chunk_samples],
-                    channels: target_channels,
-                    sample_rate: target_rate,
-                }) {
-                    Ok(()) => chunks_silence += 1,
-                    Err(_) => chunks_dropped += 1,
+            if now >= silence_next {
+                // No acumulamos silencio en la cola. Si vuelve el audio real,
+                // como máximo habrá dos paquetes mudos por delante.
+                if tx.len() < 2 {
+                    match tx.try_send(CapturedFrame {
+                        samples: vec![0i16; chunk_samples],
+                        channels: target_channels,
+                        sample_rate: target_rate,
+                    }) {
+                        Ok(()) => chunks_silence += 1,
+                        Err(_) => chunks_dropped += 1,
+                    }
                 }
-                t += chunk_duration;
-                injected += 1;
+                // Un bloqueo largo descarta tiempo pasado en vez de enviar
+                // una ráfaga de paquetes que elevaría la latencia.
+                silence_next = now + chunk_duration;
             }
-            // Si venimos de un parón largo no intentamos recuperar todo el
-            // tiempo perdido: resincronizamos con el ahora.
-            silence_next = if t > now { t } else { now + chunk_duration };
         } else {
-            silence_next = Instant::now() + SILENCE_AFTER_IDLE;
+            silence_next = last_real_audio + SILENCE_AFTER_IDLE;
         }
 
         if last_report.elapsed() >= DIAGNOSTICS_INTERVAL {
@@ -377,9 +373,15 @@ fn capture_thread_main(
             max_event_gap = Duration::ZERO;
         }
 
-        // En modo silencio no tiene sentido esperar al evento: no va a llegar.
-        // Sondeamos a menudo para mantener el ritmo de los frames mudos.
-        let wait_ms = if idle { IDLE_POLL_MS } else { EVENT_TIMEOUT_MS };
+        // Esperar hasta el umbral de inactividad evita el hueco inicial de 3 s
+        // antes de empezar el silencio, pero conserva la espera por eventos
+        // durante el audio normal.
+        let wait_ms = if idle {
+            IDLE_POLL_MS
+        } else {
+            let until_idle = SILENCE_AFTER_IDLE.saturating_sub(last_real_audio.elapsed());
+            (until_idle.as_millis().max(1) as u32).min(EVENT_TIMEOUT_MS)
+        };
 
         if h_event.wait_for_event(wait_ms).is_err() {
             // Si el running ya está a false, es un shutdown ordenado.
