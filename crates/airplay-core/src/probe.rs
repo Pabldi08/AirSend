@@ -153,6 +153,7 @@ pub fn manual_device(ip: IpAddr, port: Option<u16>, name: Option<String>) -> Dev
     let port = port.unwrap_or(DEFAULT_AIRPLAY_PORT);
     let display = name.unwrap_or_else(|| format!("Dispositivo manual {ip}"));
     Device {
+        hardware_id: None,
         id: format!("manual://{ip}:{port}"),
         name: display,
         host: ip.to_string(),

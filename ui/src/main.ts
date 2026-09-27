@@ -12,6 +12,7 @@ type DeviceKind = "homepod" | "appletv" | "airportexpress" | "otherairplay";
 
 interface Device {
   id: string;
+  hardware_id: string | null;
   name: string;
   host: string;
   addresses: string[];
@@ -60,9 +61,11 @@ function setupAsyncErrorListener() {
 }
 
 const known = new Map<string, Device>();
+const discovered = new Map<string, Device>();
 let unlisten: UnlistenFn | null = null;
 let connectedId: string | null = null;
 let connectingId: string | null = null;
+let connectedRoute: Device | null = null;
 
 interface ConnectionInfo {
   ip: string;
@@ -75,13 +78,25 @@ async function connect(device: Device) {
   connectingId = device.id;
   render();
   try {
-    const ip = device.addresses.find((a) => !a.includes(":")) ?? device.addresses[0];
-    if (!ip) throw new Error("dispositivo sin dirección IP");
-    await invoke<ConnectionInfo>("connect_device", {
-      ip,
-      port: device.port,
-      name: device.name,
-    });
+    let lastError: unknown = new Error("dispositivo sin dirección IP");
+    let route: Device | null = null;
+    for (const candidate of routesFor(device)) {
+      const ip = candidate.addresses.find((a) => !a.includes(":")) ?? candidate.addresses[0];
+      if (!ip) continue;
+      try {
+        await invoke<ConnectionInfo>("connect_device", {
+          ip,
+          port: candidate.port,
+          name: device.name,
+        });
+        route = candidate;
+        break;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (!route) throw lastError;
+    connectedRoute = route;
     connectedId = device.id;
   } catch (err) {
     statusEl.textContent = t("error_prefix", { err: String(err) });
@@ -97,6 +112,7 @@ async function disconnect() {
     await invoke("disconnect_device");
   } finally {
     connectedId = null;
+    connectedRoute = null;
     render();
   }
 }
@@ -134,23 +150,37 @@ function updatePlayerUi() {
 async function startPlay() {
   const dev = connectedId ? known.get(connectedId) : null;
   if (!dev) return;
-  const ip = dev.addresses.find((a) => !a.includes(":")) ?? dev.addresses[0];
-  if (!ip) return;
   playBtn.disabled = true;
   playerStatus.textContent = t("player_starting");
   try {
     const vol = Number(volumeSlider.value) / 100;
-    await invoke("start_streaming", {
-      ip,
-      port: dev.port,
-      name: dev.name,
-      volume: vol,
-      latencyMs: confirmedLatencyMs,
-    });
+    let lastError: unknown = new Error("dispositivo sin dirección IP");
+    let activeRoute: Device | null = null;
+    for (const route of routesFor(dev, connectedRoute)) {
+      const ip = route.addresses.find((a) => !a.includes(":")) ?? route.addresses[0];
+      if (!ip) continue;
+      try {
+        await invoke("start_streaming", {
+          ip,
+          port: route.port,
+          name: dev.name,
+          volume: vol,
+          latencyMs: confirmedLatencyMs,
+        });
+        activeRoute = route;
+        void invoke("save_last_device", { ip, port: route.port, name: dev.name });
+        break;
+      } catch (err) {
+        lastError = err;
+        // Capture and settings errors cannot be repaired by switching ports.
+        if (!String(err).startsWith("stream:")) break;
+      }
+    }
+    if (!activeRoute) throw lastError;
+    connectedRoute = activeRoute;
     playing = true;
     playerStatus.textContent = t("player_playing");
     // Persistimos para auto-reconnect (C2) y carga rápida en futuros arranques.
-    void invoke("save_last_device", { ip, port: dev.port, name: dev.name });
     void invoke("save_volume", { volume: vol });
   } catch (err) {
     playerStatus.textContent = t("error_prefix", { err: String(err) });
@@ -298,6 +328,63 @@ function render() {
   updatePlayerUi();
 }
 
+function isRaop(device: Device): boolean {
+  return device.id.toLowerCase().includes("._raop._tcp.");
+}
+
+function isAirPlay(device: Device): boolean {
+  return device.id.toLowerCase().includes("._airplay._tcp.");
+}
+
+function displayName(device: Device): string {
+  return isRaop(device) ? device.name.replace(/^[0-9a-f:-]{12,17}@/i, "") : device.name;
+}
+
+function deviceGroupKey(device: Device): string {
+  if (!isRaop(device) && !isAirPlay(device)) return device.id;
+  if (device.hardware_id) return `hardware:${device.hardware_id}`;
+  return `host:${device.host.toLowerCase()}|${displayName(device).toLowerCase()}`;
+}
+
+function routesFor(device: Device, first: Device | null = null): Device[] {
+  const routes = [...discovered.values()].filter((candidate) => deviceGroupKey(candidate) === device.id);
+  if (routes.length === 0) return [device];
+  routes.sort((a, b) => {
+    const preference = device.kind === "homepod" ? isAirPlay : isRaop;
+    return Number(preference(b)) - Number(preference(a));
+  });
+  if (first) routes.sort((a, b) => Number(b.id === first.id) - Number(a.id === first.id));
+  return routes;
+}
+
+function refreshKnownDevices() {
+  known.clear();
+  const groups = new Map<string, Device[]>();
+  for (const device of discovered.values()) {
+    const key = deviceGroupKey(device);
+    const group = groups.get(key) ?? [];
+    group.push(device);
+    groups.set(key, group);
+  }
+  for (const [key, group] of groups) {
+    // RAOP is the working transport for receivers that advertise both
+    // services; AirPlay carries the human-friendly name and device type.
+    const presentation = group.find(isAirPlay) ?? group[0];
+    const transport = presentation.kind === "homepod"
+      ? group.find(isAirPlay) ?? group[0]
+      : group.find(isRaop) ?? group[0];
+    known.set(key, {
+      ...transport,
+      id: key,
+      name: displayName(presentation),
+      kind: presentation.kind,
+      model: presentation.model ?? transport.model,
+      features: transport.features ?? presentation.features,
+      supports_airplay2: group.some((device) => device.supports_airplay2),
+    });
+  }
+}
+
 function escape(s: string): string {
   return s.replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
@@ -308,6 +395,7 @@ async function startScan() {
   scanBtn.disabled = true;
   statusEl.textContent = t("scan_searching");
   known.clear();
+  discovered.clear();
   render();
 
   if (unlisten) {
@@ -316,7 +404,8 @@ async function startScan() {
   }
 
   unlisten = await listen<Device>("airplay://device", (event) => {
-    known.set(event.payload.id, event.payload);
+    discovered.set(event.payload.id, event.payload);
+    refreshKnownDevices();
     render();
   });
 
@@ -492,8 +581,9 @@ async function bootstrap() {
         port: last.port,
         name: last.name,
       });
-      known.set(dev.id, dev);
-      found = dev;
+      discovered.set(dev.id, dev);
+      refreshKnownDevices();
+      found = known.get(dev.id) ?? dev;
       render();
     } catch (err) {
       showToast(t("cant_find", { name: last.name, err: String(err) }), 6000);
@@ -505,6 +595,9 @@ async function bootstrap() {
   // sin uso real) y vamos directo a streaming, marcando connectedId para que
   // startPlay y el resto de la UI lo traten como activo.
   connectedId = found.id;
+  connectedRoute = routesFor(found).find((route) =>
+    route.port === last!.port && route.addresses.includes(last!.ip)
+  ) ?? null;
   render();
   await startPlay();
 }
