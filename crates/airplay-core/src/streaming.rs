@@ -71,7 +71,7 @@ pub enum StreamError {
     },
     #[error("audio encoder error: {0}")]
     Encoder(String),
-    #[error("latency must be 200–3000 ms in 100 ms steps (got {0} ms)")]
+    #[error("latency must be 0–3000 ms in 100 ms steps (got {0} ms)")]
     InvalidLatency(u32),
 }
 
@@ -86,7 +86,7 @@ impl StreamError {
 }
 
 pub const DEFAULT_LATENCY_MS: u32 = 3000;
-pub const MIN_LATENCY_MS: u32 = 200;
+pub const MIN_LATENCY_MS: u32 = 0;
 pub const MAX_LATENCY_MS: u32 = 3000;
 pub const LATENCY_STEP_MS: u32 = 100;
 
@@ -103,6 +103,9 @@ pub fn validate_latency_ms(latency_ms: u32) -> Result<(), StreamError> {
 /// Receivers can choose their own delay within the range or add more buffering.
 fn latency_frames(latency_ms: u32) -> Result<(u32, u32), StreamError> {
     validate_latency_ms(latency_ms)?;
+    if latency_ms == 0 {
+        return Ok((0, 0));
+    }
     let min_ms = (latency_ms / 4).clamp(100, 500);
     Ok((min_ms * 44_100 / 1000, latency_ms * 44_100 / 1000))
 }
@@ -433,8 +436,9 @@ mod tests {
             (22_050, 132_300)
         );
         assert_eq!(latency_frames(1000).unwrap(), (11_025, 44_100));
-        assert_eq!(latency_frames(MIN_LATENCY_MS).unwrap(), (4_410, 8_820));
-        for invalid in [0, 199, 250, 3100] {
+        assert_eq!(latency_frames(MIN_LATENCY_MS).unwrap(), (0, 0));
+        assert_eq!(latency_frames(200).unwrap(), (4_410, 8_820));
+        for invalid in [1, 199, 250, 3100] {
             assert!(latency_frames(invalid).is_err());
         }
     }

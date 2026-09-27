@@ -429,7 +429,7 @@ async function preloadSavedLatency() {
       invoke<number | null>("get_latency"),
       invoke<number>("get_latency_cooldown_ms"),
     ]);
-    if (saved !== null && saved >= 200 && saved <= 3000) {
+    if (saved !== null && saved >= 0 && saved <= 3000) {
       confirmedLatencyMs = saved;
       latencySlider.value = String(saved);
     }

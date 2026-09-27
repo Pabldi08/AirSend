@@ -21,7 +21,7 @@ const ES: Dict = {
   latency_lower: "Menos retardo",
   latency_safer: "Más estabilidad",
   latency_hint:
-    "Confirma el cambio para aplicarlo. Solo puedes cambiarlo una vez cada 10 segundos. Si se está reproduciendo audio, la conexión se reinicia brevemente. Un valor bajo puede causar cortes; el receptor puede añadir más retardo.",
+    "Confirma el cambio para aplicarlo. Solo puedes cambiarlo una vez cada 10 segundos. Si se está reproduciendo audio, la conexión se reinicia brevemente. 0 ms solicita ningún búfer adicional, pero es experimental: puede fallar o causar cortes. El receptor puede añadir más retardo.",
   latency_confirm: "Confirmar",
   latency_current: "Valor aplicado",
   latency_pending: "Pendiente de confirmar",
@@ -65,7 +65,7 @@ const EN: Dict = {
   latency_lower: "Less delay",
   latency_safer: "More stable",
   latency_hint:
-    "Confirm to apply a change. You can change it only once every 10 seconds. If audio is playing, the connection briefly restarts. Low values may stutter, and the receiver may add more delay.",
+    "Confirm to apply a change. You can change it only once every 10 seconds. If audio is playing, the connection briefly restarts. 0 ms requests no extra buffer, but is experimental: it may fail or stutter. The receiver may add more delay.",
   latency_confirm: "Confirm",
   latency_current: "Applied value",
   latency_pending: "Awaiting confirmation",

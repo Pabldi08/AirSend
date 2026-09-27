@@ -42,7 +42,7 @@ and does not aim to cover screen mirroring or multi-target streaming.
 | Tray + close-to-tray | ✅ | ✅ | ✅ |
 | Auto-reconnect to last device | ✅ | ✅ | ✅ |
 | Manual IP when mDNS fails | ✅ | ❌ | ⚠️ Limited |
-| AirPlay buffer control | 200–3000 ms requested upper bound; receiver may add delay | Variable | High, occasional desync |
+| AirPlay buffer control | 0–3000 ms requested upper bound; receiver may add delay | Variable | High, occasional desync |
 | Windows jitter in release builds | ✅ MMCSS Pro Audio + HIGH_PRIORITY | ❌ | ✅ |
 | Active development | ✅ | ❌, stalled for years | ✅ |
 | Auditable source | ✅ | ❌ | ❌ |
@@ -70,7 +70,7 @@ AirPlay-compatible devices.
 - [x] Add device by manual IP (networks with broken mDNS: Movistar HGU routers, VLANs)
 - [x] Auto-reconnect to the last device on startup
 - [x] Persistent volume across sessions
-- [x] Confirmed latency slider (200–3000 ms buffer limit), with a 10-second cooldown and saved setting
+- [x] Confirmed latency slider (0–3000 ms requested buffer limit), with a 10-second cooldown and saved setting; 0 ms is experimental
 - [x] System tray + close-to-tray (app keeps running in the background)
 - [x] Daily-rotated log files + UI toast for async errors
 - [x] Manual releases through GitHub Releases
