@@ -61,7 +61,7 @@ AirPlay-compatible devices.
 
 ## Roadmap
 
-### Current version: 0.1.4
+### Current version: 0.1.7
 
 - [x] System audio capture via WASAPI loopback
 - [x] AirPlay 2 streaming (ALAC + ChaCha20-Poly1305 + RTSP/RTP)

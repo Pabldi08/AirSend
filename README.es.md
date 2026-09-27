@@ -51,7 +51,7 @@ El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta 
 
 ## Roadmap
 
-### Versión actual: 0.1.4
+### Versión actual: 0.1.7
 
 - [x] Captura de audio del sistema con WASAPI loopback
 - [x] Envío AirPlay 2 (ALAC + ChaCha20-Poly1305 + RTSP/RTP)
