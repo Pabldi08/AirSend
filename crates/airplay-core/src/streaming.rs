@@ -71,6 +71,8 @@ pub enum StreamError {
     },
     #[error("audio encoder error: {0}")]
     Encoder(String),
+    #[error("latency must be 0–3000 ms in 100 ms steps (got {0} ms)")]
+    InvalidLatency(u32),
 }
 
 impl StreamError {
@@ -83,40 +85,35 @@ impl StreamError {
     }
 }
 
-/// Perfil de latencia: define el rango (`latency_min`/`latency_max`) con el que
-/// el HomePod dimensiona su buffer de recepción. Menos latencia = más reactivo
-/// pero más sensible a hipos de Wi-Fi: si el buffer del receptor se vacía, el
-/// audio "se robotiza" (repite el último paquete) aunque nuestro sender vaya a
-/// cero drops. `Music` es el rango seguro probado; `Video`/`Gaming` bajan el
-/// suelo para quien tenga buena red y quiera menos retardo. El usuario elige el
-/// perfil en la UI y se persiste como el volumen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum LatencyProfile {
-    /// ~500 ms – 3 s. Seguro sobre Wi-Fi normal. Default.
-    #[default]
-    Music,
-    /// ~350 ms – 2 s. Menos retardo para vídeo; necesita red estable.
-    Video,
-    /// ~250 ms – 1 s. Mínimo retardo; sólo redes buenas, puede robotizar.
-    Gaming,
-}
+pub const DEFAULT_LATENCY_MS: u32 = 3000;
+pub const MIN_LATENCY_MS: u32 = 0;
+pub const MAX_LATENCY_MS: u32 = 3000;
+pub const LATENCY_STEP_MS: u32 = 100;
 
-impl LatencyProfile {
-    /// `(latency_min, latency_max)` en frames @ 44.1 kHz.
-    fn frames(self) -> (u32, u32) {
-        match self {
-            LatencyProfile::Music => (22_050, 132_300), // ~500 ms – 3 s
-            LatencyProfile::Video => (15_435, 88_200),  // ~350 ms – 2 s
-            LatencyProfile::Gaming => (11_025, 44_100), // ~250 ms – 1 s
-        }
+pub fn validate_latency_ms(latency_ms: u32) -> Result<(), StreamError> {
+    if (MIN_LATENCY_MS..=MAX_LATENCY_MS).contains(&latency_ms) && latency_ms % LATENCY_STEP_MS == 0
+    {
+        Ok(())
+    } else {
+        Err(StreamError::InvalidLatency(latency_ms))
     }
 }
 
+/// The slider controls the upper end of the negotiated AirPlay buffer range.
+/// Receivers can choose their own delay within the range or add more buffering.
+fn latency_frames(latency_ms: u32) -> Result<(u32, u32), StreamError> {
+    validate_latency_ms(latency_ms)?;
+    if latency_ms == 0 {
+        return Ok((0, 0));
+    }
+    let min_ms = (latency_ms / 4).clamp(100, 500);
+    Ok((min_ms * 44_100 / 1000, latency_ms * 44_100 / 1000))
+}
+
 /// Configuración usada para abrir el stream. Para Hito 4a fijamos ALAC 44.1k/16/2,
-/// timing NTP. Tono o captura, el formato es el mismo. `profile` decide el rango
-/// de latencia que negociamos con el HomePod.
-fn streaming_stream_config(profile: LatencyProfile) -> Result<StreamConfig, StreamError> {
+/// timing NTP. Tono o captura, el formato es el mismo. `latency_ms` sets the
+/// maximum requested receiver buffer, not a guaranteed end-to-end delay.
+fn streaming_stream_config(latency_ms: u32) -> Result<StreamConfig, StreamError> {
     let audio_format = AudioFormat {
         codec: AudioCodec::Alac,
         sample_rate: ap2rs_core::codec::SampleRate::Hz44100,
@@ -131,16 +128,10 @@ fn streaming_stream_config(profile: LatencyProfile) -> Result<StreamConfig, Stre
         .map_err(|e| StreamError::Encoder(e.to_string()))?
         .magic_cookie();
 
-    // latency_min/max define el buffer interno del HomePod (frames @ 44.1k).
-    // El HomePod elige dentro del rango según condiciones de red. Probado:
-    // 100–500 ms es demasiado ajustado sobre Wi-Fi — cualquier hipo vacía el
-    // buffer del receptor y el audio "se robotiza" (repite paquete) aunque
-    // nuestro sender vaya a cero drops. El default (`Music`) usa los mismos
-    // valores que el test upstream de live capture (500 ms / 3 s), estable.
-    // `Video`/`Gaming` bajan el suelo para quien quiera menos retardo y tenga
-    // red buena; el `LatencyProfile` documenta el riesgo.
+    // The default remains 500 ms – 3 s. A smaller upper bound can reduce
+    // receiver buffering, at the cost of more dropouts on unstable networks.
     // `ptp_mode` es ignorado por upstream cuando `timing_protocol == Ntp`.
-    let (latency_min, latency_max) = profile.frames();
+    let (latency_min, latency_max) = latency_frames(latency_ms)?;
     Ok(StreamConfig {
         stream_type: StreamType::Realtime,
         audio_format,
@@ -248,15 +239,16 @@ impl StreamHandle {
 
 /// Abre un stream de audio en vivo al HomePod: pair-setup + setup() + start_streaming_live().
 /// Si `initial_volume` es `None`, usa `DEFAULT_INITIAL_VOLUME` (bajo). Si
-/// `latency` es `None`, usa el perfil por defecto (`LatencyProfile::Music`).
+/// `latency_ms` is `None`, uses the safe 3 s upper bound.
 pub async fn open_live_stream(
     descriptor: DeviceDescriptor,
     initial_volume: Option<f32>,
-    latency: Option<LatencyProfile>,
+    latency_ms: Option<u32>,
 ) -> Result<StreamHandle, StreamError> {
+    validate_latency_ms(latency_ms.unwrap_or(DEFAULT_LATENCY_MS))?;
     let endpoint = format!("{}:{}", descriptor.ip, descriptor.port);
     let result = retry_once_on_timeout(
-        || open_live_stream_once(descriptor.clone(), initial_volume, latency),
+        || open_live_stream_once(descriptor.clone(), initial_volume, latency_ms),
         CONNECTION_RETRY_DELAY,
     )
     .await;
@@ -277,10 +269,10 @@ pub async fn open_live_stream(
 async fn open_live_stream_once(
     descriptor: DeviceDescriptor,
     initial_volume: Option<f32>,
-    latency: Option<LatencyProfile>,
+    latency_ms: Option<u32>,
 ) -> Result<StreamHandle, StreamError> {
     let device = build_device(&descriptor)?;
-    let config = streaming_stream_config(latency.unwrap_or_default())?;
+    let config = streaming_stream_config(latency_ms.unwrap_or(DEFAULT_LATENCY_MS))?;
     let sample_rate = config.audio_format.sample_rate.as_hz();
     let channels = config.audio_format.channels;
 
@@ -437,6 +429,21 @@ mod tests {
     use super::*;
     use std::collections::VecDeque;
 
+    #[test]
+    fn latency_slider_bounds_map_to_airplay_frames() {
+        assert_eq!(
+            latency_frames(DEFAULT_LATENCY_MS).unwrap(),
+            (22_050, 132_300)
+        );
+        assert_eq!(latency_frames(1000).unwrap(), (11_025, 44_100));
+        assert_eq!(latency_frames(MIN_LATENCY_MS).unwrap(), (0, 0));
+        let zero_config = streaming_stream_config(0).unwrap();
+        assert_eq!((zero_config.latency_min, zero_config.latency_max), (0, 0));
+        assert_eq!(latency_frames(200).unwrap(), (4_410, 8_820));
+        for invalid in [1, 199, 250, 3100] {
+            assert!(latency_frames(invalid).is_err());
+        }
+    }
     fn timeout(stage: StreamStage) -> StreamError {
         StreamError::Client {
             stage,

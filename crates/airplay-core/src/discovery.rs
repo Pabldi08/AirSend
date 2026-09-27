@@ -39,6 +39,7 @@ impl DeviceKind {
 #[derive(Debug, Clone, Serialize)]
 pub struct Device {
     pub id: String,
+    pub hardware_id: Option<String>,
     pub name: String,
     pub host: String,
     pub addresses: Vec<IpAddr>,
@@ -78,6 +79,16 @@ impl Discovery {
                             .collect();
 
                         let model = txt.get("model").cloned();
+                        let instance_name = info.get_fullname().split('.').next().unwrap_or("?");
+                        let hardware_id = txt
+                            .get("deviceid")
+                            .and_then(|id| normalize_hardware_id(id))
+                            .or_else(|| {
+                                (svc_label == SVC_RAOP)
+                                    .then(|| instance_name.split('@').next())
+                                    .flatten()
+                                    .and_then(normalize_hardware_id)
+                            });
                         let features = txt.get("features").or_else(|| txt.get("ft")).cloned();
                         let supports_airplay2 = txt
                             .get("srcvers")
@@ -89,12 +100,8 @@ impl Discovery {
 
                         let device = Device {
                             id: info.get_fullname().to_string(),
-                            name: info
-                                .get_fullname()
-                                .split('.')
-                                .next()
-                                .unwrap_or("?")
-                                .to_string(),
+                            hardware_id,
+                            name: instance_name.to_string(),
                             host: info.get_hostname().to_string(),
                             addresses,
                             port: info.get_port(),
@@ -119,6 +126,30 @@ impl Discovery {
 
     pub fn shutdown(&self) {
         let _ = self.daemon.shutdown();
+    }
+}
+
+fn normalize_hardware_id(id: &str) -> Option<String> {
+    let hex: String = id.chars().filter(|c| *c != ':' && *c != '-').collect();
+    (hex.len() == 12 && hex.chars().all(|c| c.is_ascii_hexdigit()))
+        .then(|| hex.to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_hardware_id;
+
+    #[test]
+    fn normalizes_airplay_and_raop_device_ids() {
+        assert_eq!(
+            normalize_hardware_id("00:06:78:AA:BB:CC"),
+            Some("000678aabbcc".into())
+        );
+        assert_eq!(
+            normalize_hardware_id("000678AABBCC"),
+            Some("000678aabbcc".into())
+        );
+        assert_eq!(normalize_hardware_id("Denon"), None);
     }
 }
 

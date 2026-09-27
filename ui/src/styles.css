@@ -138,6 +138,33 @@ ul#devices {
   background: #16a34a;
 }
 
+.multi-control {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.multi-control label { display: flex; align-items: center; gap: 9px; font-weight: 600; cursor: pointer; }
+.multi-control input { accent-color: var(--accent); }
+.multi-control .hint { margin: 8px 0 0 24px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+
+.confirm-dialog {
+  width: min(90vw, 390px);
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--fg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .25);
+}
+.confirm-dialog::backdrop { background: rgba(0, 0, 0, .55); }
+.confirm-dialog h2 { margin: 0 0 10px; font-size: 18px; }
+.confirm-dialog p { margin: 0 0 20px; font-size: 14px; line-height: 1.45; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.dialog-actions .secondary { background: var(--border); color: var(--fg); }
+
 .player {
   margin-top: 20px;
   padding: 14px;
@@ -174,6 +201,59 @@ ul#devices {
   min-width: 38px;
   text-align: right;
   color: var(--fg);
+}
+
+.latency-control {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.latency-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.latency-label output {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.latency-control input[type="range"] {
+  display: block;
+  width: 100%;
+  margin: 11px 0 3px;
+  accent-color: var(--accent);
+}
+
+.latency-scale {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.latency-control .hint {
+  margin: 11px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.latency-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.latency-actions button {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 6px 11px;
 }
 
 details.manual {

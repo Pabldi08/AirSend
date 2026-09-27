@@ -36,10 +36,24 @@ use crate::{Capture, CaptureError, CaptureFormat, CapturedFrame};
 /// backend `parec` para que el pipeline vea el mismo tamaño en ambos OS.
 const CHUNK_FRAMES: usize = 352;
 
-/// Timeout del `wait_for_event` (ms). Si Windows deja de enviar eventos
-/// durante este tiempo, salimos del loop con error (driver colgado, audio
-/// device desconectado, etc.).
+/// Timeout del `wait_for_event` (ms) mientras hay audio real en curso.
 const EVENT_TIMEOUT_MS: u32 = 3_000;
+
+/// Cuánto tiempo sin chunks reales toleramos antes de dar el endpoint por
+/// inactivo y empezar a inyectar silencio. Por debajo de esto es un hueco
+/// normal entre chunks (uno cada ~8 ms); por encima, que no hay nadie
+/// reproduciendo audio en el dispositivo por defecto.
+const SILENCE_AFTER_IDLE: Duration = Duration::from_millis(100);
+
+/// Intervalo de sondeo (ms) mientras inyectamos silencio. En ese modo el
+/// `wait_for_event` no va a llegar —el endpoint está parado y WASAPI no manda
+/// eventos—, así que despertamos a menudo para mantener el ritmo de los frames.
+const IDLE_POLL_MS: u32 = 8;
+
+/// Como mucho un aviso de "sin eventos" cada este tiempo (si no, el log se
+/// llena a razón de uno cada 3 s durante todo un silencio).
+const IDLE_WARN_INTERVAL: Duration = Duration::from_secs(10);
+
 const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(10);
 
 struct MmcssGuard(*mut std::ffi::c_void);
@@ -117,7 +131,7 @@ impl Drop for WindowsCapture {
 pub fn start(
     fmt: CaptureFormat,
 ) -> Result<(Box<dyn Capture>, Receiver<CapturedFrame>), CaptureError> {
-    if fmt.channels != 2 {
+    if fmt.channels != 2 || fmt.sample_rate == 0 {
         return Err(CaptureError::UnsupportedConfig {
             wanted: fmt.sample_rate,
             channels: fmt.channels,
@@ -258,10 +272,21 @@ fn capture_thread_main(
 
     let chunk_bytes = CHUNK_FRAMES * bytes_per_frame;
     let mut chunks_captured = 0u64;
+    let mut chunks_silence = 0u64;
     let mut chunks_dropped = 0u64;
     let mut last_iteration = Instant::now();
     let mut last_report = last_iteration;
     let mut max_event_gap = Duration::ZERO;
+
+    // Ritmo real de un chunk (352 frames @ 44.1 kHz ≈ 7.982 ms): a ese ritmo hay
+    // que soltar el silencio para que el receptor no note el hueco.
+    let chunk_duration =
+        Duration::from_nanos(CHUNK_FRAMES as u64 * 1_000_000_000 / target_rate as u64);
+    // Samples que ocupa un chunk (352 frames * 2 canales).
+    let chunk_samples = CHUNK_FRAMES * target_channels as usize;
+    let mut last_real_audio = Instant::now();
+    let mut silence_next = last_real_audio + SILENCE_AFTER_IDLE;
+    let mut last_idle_warn: Option<Instant> = None;
 
     while running.load(Ordering::SeqCst) {
         let now = Instant::now();
@@ -274,8 +299,10 @@ fn capture_thread_main(
             .read_from_device_to_deque(&mut byte_queue)
             .map_err(|e| format!("read_from_device_to_deque: {e}"))?;
 
+        let mut produced = false;
         while byte_queue.len() >= chunk_bytes {
             chunks_captured += 1;
+            produced = true;
             let mut samples = Vec::with_capacity(CHUNK_FRAMES * target_channels as usize);
             // bytes_per_frame = 2 canales * 2 bytes/sample = 4. Consumimos
             // exactamente chunk_bytes bytes y los convertimos a i16 LE.
@@ -299,26 +326,83 @@ fn capture_thread_main(
             }
         }
 
+        if produced {
+            last_real_audio = Instant::now();
+        }
+
+        // ¿El endpoint lleva un rato sin entregar nada? Entonces no hay nadie
+        // reproduciendo audio en él (o está en standby) y WASAPI no va a mandar
+        // más eventos. Rellenamos con silencio al ritmo real para que la sesión
+        // AirPlay siga recibiendo datos y el receptor no la dé por muerta; en
+        // cuanto vuelva el audio de verdad, esto se corta solo.
+        let idle = last_real_audio.elapsed() >= SILENCE_AFTER_IDLE;
+        if idle {
+            let now = Instant::now();
+            if now >= silence_next {
+                // No acumulamos silencio en la cola. Si vuelve el audio real,
+                // como máximo habrá dos paquetes mudos por delante.
+                if tx.len() < 2 {
+                    match tx.try_send(CapturedFrame {
+                        samples: vec![0i16; chunk_samples],
+                        channels: target_channels,
+                        sample_rate: target_rate,
+                    }) {
+                        Ok(()) => chunks_silence += 1,
+                        Err(_) => chunks_dropped += 1,
+                    }
+                }
+                // Un bloqueo largo descarta tiempo pasado en vez de enviar
+                // una ráfaga de paquetes que elevaría la latencia.
+                silence_next = now + chunk_duration;
+            }
+        } else {
+            silence_next = last_real_audio + SILENCE_AFTER_IDLE;
+        }
+
         if last_report.elapsed() >= DIAGNOSTICS_INTERVAL {
             tracing::info!(
                 chunks_captured,
+                chunks_silence,
                 chunks_dropped,
                 max_event_gap_ms = max_event_gap.as_millis(),
                 queued_frames = byte_queue.len() / bytes_per_frame,
+                idle,
                 "WASAPI capture diagnostics"
             );
             last_report = Instant::now();
             max_event_gap = Duration::ZERO;
         }
 
-        if h_event.wait_for_event(EVENT_TIMEOUT_MS).is_err() {
+        // Esperar hasta el umbral de inactividad evita el hueco inicial de 3 s
+        // antes de empezar el silencio, pero conserva la espera por eventos
+        // durante el audio normal.
+        let wait_ms = if idle {
+            IDLE_POLL_MS
+        } else {
+            let until_idle = SILENCE_AFTER_IDLE.saturating_sub(last_real_audio.elapsed());
+            (until_idle.as_millis().max(1) as u32).min(EVENT_TIMEOUT_MS)
+        };
+
+        if h_event.wait_for_event(wait_ms).is_err() {
             // Si el running ya está a false, es un shutdown ordenado.
             if !running.load(Ordering::SeqCst) {
                 break;
             }
-            tracing::error!("wait_for_event timeout — driver de audio sin respuesta");
-            let _ = audio_client.stop_stream();
-            return Err("wait_for_event timeout".into());
+            // Un timeout NO es fatal: lo normal es que el endpoint esté parado
+            // porque nadie reproduce audio, no que el driver esté colgado.
+            // Antes dábamos el hilo por muerto aquí, y el streaming se quedaba
+            // mudo para siempre hasta reiniciar la app. Ahora seguimos: el
+            // silencio mantiene el flujo vivo y el audio real se reanuda solo.
+            let should_warn = last_idle_warn
+                .map(|t| t.elapsed() >= IDLE_WARN_INTERVAL)
+                .unwrap_or(true);
+            if should_warn {
+                tracing::warn!(
+                    wait_ms,
+                    "loopback sin eventos — endpoint inactivo, seguimos esperando"
+                );
+                last_idle_warn = Some(Instant::now());
+            }
         }
     }
 

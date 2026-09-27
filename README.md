@@ -29,7 +29,8 @@ Download the latest release:
 This table summarizes the main differences between AirSend and some
 popular alternatives. AirSend prioritizes being free, auditable and
 compatible with HomePod over AirPlay 2 — it is still a young project
-and does not aim to cover screen mirroring or multi-target streaming.
+and does not aim to cover screen mirroring. Multi-device playback is
+experimental and does not synchronize receiver clocks.
 
 | Feature | AirSend | TuneBlade | AirParrot |
 |---|---|---|---|
@@ -42,7 +43,7 @@ and does not aim to cover screen mirroring or multi-target streaming.
 | Tray + close-to-tray | ✅ | ✅ | ✅ |
 | Auto-reconnect to last device | ✅ | ✅ | ✅ |
 | Manual IP when mDNS fails | ✅ | ❌ | ⚠️ Limited |
-| Stable HomePod latency | 500 ms – 3 s, configurable | Variable | High, occasional desync |
+| AirPlay buffer control | 0–3000 ms requested upper bound; receiver may add delay | Variable | High, occasional desync |
 | Windows jitter in release builds | ✅ MMCSS Pro Audio + HIGH_PRIORITY | ❌ | ✅ |
 | Active development | ✅ | ❌, stalled for years | ✅ |
 | Auditable source | ✅ | ❌ | ❌ |
@@ -60,7 +61,7 @@ AirPlay-compatible devices.
 
 ## Roadmap
 
-### Current version: 0.1.4
+### Current version: 0.1.7
 
 - [x] System audio capture via WASAPI loopback
 - [x] AirPlay 2 streaming (ALAC + ChaCha20-Poly1305 + RTSP/RTP)
@@ -70,7 +71,7 @@ AirPlay-compatible devices.
 - [x] Add device by manual IP (networks with broken mDNS: Movistar HGU routers, VLANs)
 - [x] Auto-reconnect to the last device on startup
 - [x] Persistent volume across sessions
-- [x] Selectable latency profiles (Music / Video / Gaming), persisted across sessions
+- [x] Confirmed latency slider (0–3000 ms requested buffer limit), with a 10-second cooldown and saved setting; 0 ms is experimental
 - [x] System tray + close-to-tray (app keeps running in the background)
 - [x] Daily-rotated log files + UI toast for async errors
 - [x] Manual releases through GitHub Releases
@@ -86,7 +87,7 @@ AirPlay-compatible devices.
 
 ### Future
 
-- [ ] Simultaneous multi-target (group streaming to multiple HomePods)
+- [ ] Validate experimental multi-device playback on multiple receivers and add clock synchronization
 - [ ] Per-application audio capture (WASAPI process-loopback, Win10 1903+)
 - [ ] Upstream PR to `lmcgartland/airplay2-rs` with the two Windows patches
 - [ ] Stable support for other AirPlay 2 receivers (Apple TV, AirPort Express, third-party speakers)

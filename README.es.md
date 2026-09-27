@@ -24,7 +24,7 @@ Descarga la última versión estable en:
 ## Comparativa con alternativas
 
 Esta tabla resume las diferencias principales entre AirSend y algunas alternativas populares.
-AirSend prioriza ser gratuito, auditable y compatible con HomePod mediante AirPlay 2, aunque todavía es un proyecto joven y no pretende cubrir funciones como mirroring de pantalla o multi-destino.
+AirSend prioriza ser gratuito, auditable y compatible con HomePod mediante AirPlay 2, aunque todavía es un proyecto joven y no pretende cubrir funciones como mirroring de pantalla. La reproducción en varios dispositivos es experimental y no sincroniza los relojes de los receptores.
 
 | Característica | AirSend | TuneBlade | AirParrot |
 |---|---|---|---|
@@ -37,7 +37,7 @@ AirSend prioriza ser gratuito, auditable y compatible con HomePod mediante AirPl
 | Tray + close-to-tray | ✅ | ✅ | ✅ |
 | Auto-reconnect al último device | ✅ | ✅ | ✅ |
 | IP manual si mDNS falla | ✅ | ❌ | ⚠️ Limitado |
-| Latencia HomePod estable | 500 ms – 3 s configurable | Variable | Alta, desync ocasional |
+| Control del búfer AirPlay | Límite superior solicitado de 0–3000 ms; el receptor puede añadir retardo | Variable | Alta, desync ocasional |
 | Jitter Windows en release | ✅ MMCSS Pro Audio + HIGH_PRIORITY | ❌ | ✅ |
 | Desarrollo activo | ✅ | ❌, parado desde hace años | ✅ |
 | Código auditable | ✅ | ❌ | ❌ |
@@ -51,7 +51,7 @@ El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta 
 
 ## Roadmap
 
-### Versión actual: 0.1.4
+### Versión actual: 0.1.7
 
 - [x] Captura de audio del sistema con WASAPI loopback
 - [x] Envío AirPlay 2 (ALAC + ChaCha20-Poly1305 + RTSP/RTP)
@@ -61,7 +61,7 @@ El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta 
 - [x] Añadir dispositivo por IP manual (redes con mDNS roto: Movistar HGU, VLANs)
 - [x] Reconexión automática al último dispositivo al arrancar
 - [x] Control de volumen persistente entre sesiones
-- [x] Perfiles de latencia seleccionables (Música / Vídeo / Gaming), persistentes entre sesiones
+- [x] Control deslizante de latencia (límite de búfer solicitado de 0–3000 ms) con confirmación, espera de 10 segundos y ajuste persistente; 0 ms es experimental
 - [x] Bandeja del sistema + cerrar al tray (la app sigue activa de fondo)
 - [x] Logs rotados por día + toast de errores en la UI
 - [x] Releases manuales mediante GitHub Releases
@@ -77,7 +77,7 @@ El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta 
 
 ### Futuro
 
-- [ ] Multi-destino simultáneo (group streaming a varios HomePods)
+- [ ] Validar la reproducción experimental en varios receptores y añadir sincronización de relojes
 - [ ] Selección de audio por aplicación (WASAPI process-loopback, Win10 1903+)
 - [ ] PR upstream a `lmcgartland/airplay2-rs` con los dos patches Windows
 - [ ] Soporte estable para otros receptores AirPlay 2 (Apple TV, AirPort Express, altavoces de terceros)

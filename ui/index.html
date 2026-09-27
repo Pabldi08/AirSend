@@ -27,6 +27,13 @@
           <span id="status" class="status"></span>
         </div>
         <ul id="devices"></ul>
+        <div class="multi-control">
+          <label for="multi-device">
+            <input id="multi-device" type="checkbox" />
+            <span data-i18n="multi_device">Reproducir en varios dispositivos</span>
+          </label>
+          <p class="hint" data-i18n="multi_device_hint">Experimental: al conectar otro receptor durante la reproducción, se añadirá al audio actual. Los receptores pueden no estar perfectamente sincronizados.</p>
+        </div>
         <div id="player" class="player" hidden>
           <div class="player-row">
             <button id="play-stop" class="play" data-i18n="play_generic">▶ Reproducir audio del PC</button>
@@ -37,14 +44,24 @@
             <input id="volume" type="range" min="0" max="100" value="20" />
             <output id="vol-out">20%</output>
           </label>
-          <label class="latency">
-            <span data-i18n="latency">Latencia</span>
-            <select id="latency">
-              <option value="music" data-i18n="latency_music">Música (segura)</option>
-              <option value="video" data-i18n="latency_video">Vídeo</option>
-              <option value="gaming" data-i18n="latency_gaming">Juegos (mínima)</option>
-            </select>
-          </label>
+          <div class="latency-control">
+            <label class="latency-label" for="latency">
+              <span data-i18n="latency">Límite del búfer AirPlay</span>
+              <output id="latency-out" for="latency">3000 ms</output>
+            </label>
+            <input id="latency" type="range" min="0" max="3000" step="100" value="3000" />
+            <div class="latency-scale">
+              <span data-i18n="latency_lower">Menos retardo</span>
+              <span data-i18n="latency_safer">Más estabilidad</span>
+            </div>
+            <p class="hint" data-i18n="latency_hint">
+              Confirma el cambio para aplicarlo. Solo puedes cambiarlo una vez cada 10 segundos. Si se está reproduciendo audio, la conexión se reinicia brevemente; los valores bajos pueden causar cortes.
+            </p>
+            <div class="latency-actions">
+              <button id="latency-confirm" type="button" data-i18n="latency_confirm">Confirmar</button>
+              <span id="latency-status" class="status" role="status" aria-live="polite"></span>
+            </div>
+          </div>
         </div>
         <details class="manual">
           <summary data-i18n="manual_summary">¿No aparece tu HomePod? Añade su IP manualmente</summary>
@@ -69,6 +86,14 @@
         </details>
       </section>
     </main>
+    <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-message"></p>
+      <div class="dialog-actions">
+        <button id="confirm-cancel" type="button" class="secondary" data-i18n="cancel">Cancelar</button>
+        <button id="confirm-accept" type="button"></button>
+      </div>
+    </dialog>
     <div id="toast" class="toast" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
