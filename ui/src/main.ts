@@ -100,7 +100,7 @@ async function streamTo(device: Device, command: "start_streaming" | "add_stream
       });
       return { route, ip };
     } catch (err) {
-      lastError = err;
+      lastError = String(err) === "capture_interrupted" ? t("capture_interrupted") : err;
       if (!String(err).startsWith("stream:")) break;
     }
   }
@@ -207,6 +207,50 @@ const volumeOut = document.getElementById("vol-out") as HTMLOutputElement;
 const latencySlider = document.getElementById("latency") as HTMLInputElement;
 const latencyOut = document.getElementById("latency-out") as HTMLOutputElement;
 const latencyConfirm = document.getElementById("latency-confirm") as HTMLButtonElement;
+const localBufferToggle = document.getElementById("experimental-local-buffer") as HTMLInputElement;
+const diagnosticsExport = document.getElementById("diagnostics-export") as HTMLButtonElement;
+const diagnosticsStatus = document.getElementById("diagnostics-status") as HTMLSpanElement;
+let savedLocalBuffer = false;
+
+localBufferToggle.addEventListener("change", async () => {
+  const enabled = localBufferToggle.checked;
+  if (playing || actionBusy || latencyApplying) {
+    localBufferToggle.checked = savedLocalBuffer;
+    return;
+  }
+  localBufferToggle.disabled = true;
+  try {
+    await invoke("save_experimental_local_buffer", { enabled });
+    savedLocalBuffer = enabled;
+  } catch (err) {
+    localBufferToggle.checked = savedLocalBuffer;
+    const message = String(err) === "stop_before_buffer_change" ? t("local_buffer_stop") : t("local_buffer_error", { err: String(err) });
+    showToast(message);
+  } finally {
+    updatePlayerUi();
+  }
+});
+
+diagnosticsExport.addEventListener("click", async () => {
+  diagnosticsExport.disabled = true;
+  try {
+    const report = await invoke<string>("export_audio_diagnostics");
+    const url = URL.createObjectURL(new Blob([report], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `AirSend-diagnostics-${new Date().toISOString().replaceAll(":", "-")}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    diagnosticsStatus.textContent = t("diagnostics_ready");
+  } catch (err) {
+    diagnosticsStatus.textContent = t("diagnostics_error", { err: String(err) });
+  } finally {
+    diagnosticsExport.disabled = false;
+  }
+});
+
 const latencyStatus = document.getElementById("latency-status") as HTMLSpanElement;
 
 let playing = false;
@@ -220,6 +264,7 @@ function updatePlayerUi() {
   const dev = connectedId ? known.get(connectedId) : null;
   playerEl.hidden = !dev;
   playBtn.disabled = actionBusy || latencyApplying;
+  localBufferToggle.disabled = playing || actionBusy || latencyApplying;
   if (!dev) return;
   if (playing) {
     playBtn.textContent = t("stop");
@@ -533,7 +578,7 @@ setupLangToggle();
 void initialize();
 
 async function initialize() {
-  await Promise.all([preloadSavedVolume(), preloadSavedLatency(), preloadMultiDevice()]);
+  await Promise.all([preloadSavedVolume(), preloadSavedLatency(), preloadMultiDevice(), preloadLocalBuffer()]);
   await bootstrap();
 }
 
@@ -586,6 +631,16 @@ async function preloadSavedVolume() {
     }
   } catch {
     // sin volumen guardado todavía, se queda el default del HTML.
+  }
+}
+
+async function preloadLocalBuffer() {
+  try {
+    savedLocalBuffer = await invoke<boolean>("get_experimental_local_buffer");
+    localBufferToggle.checked = savedLocalBuffer;
+  } catch {
+    savedLocalBuffer = false;
+    localBufferToggle.checked = false;
   }
 }
 

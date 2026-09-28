@@ -59,6 +59,18 @@ The main goal of the project is to offer a free, open and auditable
 alternative for users who want to stream audio from Windows to
 AirPlay-compatible devices.
 
+## Upcoming audio diagnostics and local buffer trial
+
+The development branch adds an opt-in **Reduced local buffer** setting and a
+manual **Download diagnostics** action. The stable local policy remains the
+default. Stop playback before changing the experimental option; the latency
+slider still controls the requested receiver buffer separately.
+
+The diagnostics contain bounded session metrics without device names, IP
+addresses or credentials. Local send timings do not measure audible HomePod
+delay. See `docs/phase-01-testing.md` for the comparison procedure. These
+changes are not included in the published 0.1.7 release.
+
 ## Roadmap
 
 ### Current version: 0.1.7

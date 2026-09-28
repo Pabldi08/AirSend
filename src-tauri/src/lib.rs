@@ -1,3 +1,6 @@
+mod diagnostics;
+use cap_core::streaming::{LocalBufferPolicy, PreparedLiveStream};
+use diagnostics::{DiagnosticState, SessionRecord};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Mutex;
@@ -22,6 +25,7 @@ const KEY_LAST_DEVICE: &str = "last_device";
 const KEY_VOLUME: &str = "volume";
 const KEY_LATENCY: &str = "latency";
 const KEY_MULTI_DEVICE: &str = "multi_device";
+const KEY_LOCAL_BUFFER: &str = "experimental_local_buffer";
 const AUDIO_DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(10);
 const LATENCY_CHANGE_COOLDOWN: Duration = Duration::from_secs(10);
 
@@ -170,6 +174,8 @@ struct ActiveStream {
     outputs: HashMap<String, ActiveOutput>,
     senders: std::sync::Arc<Mutex<HashMap<String, cap_core::streaming::LiveFrameSender>>>,
     _capture: Box<dyn audio_capture::Capture>,
+    diagnostics: SessionRecord,
+    policy: LocalBufferPolicy,
     pump: Option<std::thread::JoinHandle<()>>,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     latency_ms: u32,
@@ -178,11 +184,25 @@ struct ActiveStream {
 }
 
 impl ActiveStream {
+    async fn stop_outputs(&mut self) {
+        for output in self.outputs.values_mut() {
+            output._heartbeat.shutdown();
+            let stopped = tokio::time::timeout(Duration::from_secs(3), async {
+                output.connection.lock().await.stop().await
+            })
+            .await;
+            if !matches!(stopped, Ok(Ok(()))) {
+                tracing::warn!("AirPlay output did not finish FLUSH within the shutdown deadline");
+            }
+        }
+    }
     fn shutdown(&mut self) {
         self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
         if let Some(h) = self.pump.take() {
             let _ = h.join();
         }
+        self.senders.lock().unwrap().clear();
+        self.diagnostics.lock().unwrap().finish();
         // _heartbeat se aborta solo al dropearse.
     }
 }
@@ -278,14 +298,15 @@ struct StreamingInfo {
     volume: f32,
 }
 
-async fn open_output(
+async fn prepare_output(
     ip: &str,
     port: u16,
     name: &str,
     volume: f32,
     latency_ms: u32,
-) -> Result<(ActiveOutput, cap_core::streaming::LiveFrameSender, u32, u8), String> {
-    use cap_core::streaming::open_live_stream;
+    policy: LocalBufferPolicy,
+    diagnostics: &SessionRecord,
+) -> Result<PreparedLiveStream, String> {
     let parsed: IpAddr = ip.parse().map_err(|e| format!("IP inválida: {e}"))?;
     let descriptor = DeviceDescriptor {
         ip: parsed,
@@ -295,89 +316,201 @@ async fn open_output(
         model: None,
         features: None,
     };
-    let handle = open_live_stream(descriptor, Some(volume), Some(latency_ms))
+    cap_core::streaming::prepare_live_stream(descriptor, Some(volume), Some(latency_ms), policy)
         .await
-        .map_err(|e| format!("stream: {e}"))?;
-    let (sender, connection, heartbeat, sample_rate, channels) = handle.into_parts();
-    Ok((
-        ActiveOutput {
-            connection,
-            _heartbeat: heartbeat,
-            ip: parsed.to_string(),
-            port,
-            name: name.to_string(),
-            volume,
-        },
-        sender,
-        sample_rate,
-        channels,
-    ))
+        .map_err(|e| {
+            diagnostics.lock().unwrap().record_failure(e.stage_code());
+            format!("stream: {e}")
+        })
 }
 
-/// Prepare a complete replacement while the previous stream keeps playing.
-/// This also makes a failed target switch leave the original receiver intact.
+async fn start_output(
+    prepared: PreparedLiveStream,
+    ip: &str,
+    port: u16,
+    name: &str,
+    volume: f32,
+    diagnostics: &SessionRecord,
+) -> Result<ActiveOutput, String> {
+    let handle = prepared.start().await.map_err(|e| {
+        diagnostics.lock().unwrap().record_failure(e.stage_code());
+        format!("stream: {e}")
+    })?;
+    let (_, connection, heartbeat, _, _) = handle.into_parts();
+    Ok(ActiveOutput {
+        connection,
+        _heartbeat: heartbeat,
+        ip: ip.to_string(),
+        port,
+        name: name.to_string(),
+        volume,
+    })
+}
+
+async fn attach_output(
+    active: &mut ActiveStream,
+    ip: &str,
+    port: u16,
+    name: &str,
+    volume: f32,
+) -> Result<(), String> {
+    let prepared = prepare_output(
+        ip,
+        port,
+        name,
+        volume,
+        active.latency_ms,
+        active.policy,
+        &active.diagnostics,
+    )
+    .await?;
+    if (prepared.sample_rate(), prepared.channels()) != (active.sample_rate, active.channels) {
+        return Err("los receptores no comparten formato de audio".into());
+    }
+    let key = output_key(ip, port);
+    let sender = prepared.sender();
+    active
+        .diagnostics
+        .lock()
+        .unwrap()
+        .add_output(sender.clone(), prepared.metrics());
+    active
+        .senders
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(key.clone(), sender);
+    // The existing pump feeds pre-roll while this receiver starts.
+    match start_output(prepared, ip, port, name, volume, &active.diagnostics).await {
+        Ok(output) => {
+            active.outputs.insert(key, output);
+            Ok(())
+        }
+        Err(error) => {
+            active
+                .senders
+                .lock()
+                .map_err(|e| e.to_string())?
+                .remove(&key);
+            Err(error)
+        }
+    }
+}
+
+/// Prepare the network before capturing. Feed live PCM before waiting for pre-roll.
+/// The previous stream remains owned by the caller until this returns successfully.
 async fn prepare_stream(
     app: tauri::AppHandle,
     targets: &[(String, u16, String, f32)],
     latency_ms: u32,
 ) -> Result<ActiveStream, String> {
-    use audio_capture::CaptureFormat;
-    use std::sync::atomic::AtomicBool;
-    use std::sync::Arc;
+    use audio_capture::{CaptureFormat, CapturePolicy};
+    use std::sync::{atomic::AtomicBool, Arc};
     cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
-    let (capture, rx) = audio_capture::start_loopback(CaptureFormat::AIRPLAY_DEFAULT)
-        .map_err(|e| format!("captura: {e}"))?;
     let (first_ip, first_port, first_name, first_volume) =
-        targets.first().ok_or("no hay receptores".to_string())?;
-    let (first, sender, sample_rate, channels) =
-        open_output(first_ip, *first_port, first_name, *first_volume, latency_ms).await?;
-    let key = output_key(&first.ip, first.port);
-    let outputs = HashMap::from([(key.clone(), first)]);
-    let sender_map = HashMap::from([(key, sender)]);
-    let senders = Arc::new(Mutex::new(sender_map));
+        targets.first().ok_or("no hay receptores")?;
+    let policy = if get_experimental_local_buffer(app.clone())? {
+        LocalBufferPolicy::LowLatency
+    } else {
+        LocalBufferPolicy::Stable
+    };
+    let diagnostics = app.state::<DiagnosticState>().begin(latency_ms, policy);
+    let prepared = match prepare_output(
+        first_ip,
+        *first_port,
+        first_name,
+        *first_volume,
+        latency_ms,
+        policy,
+        &diagnostics,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostics.lock().unwrap().failed();
+            return Err(error);
+        }
+    };
+    let sample_rate = prepared.sample_rate();
+    let channels = prepared.channels();
+    let began = Instant::now();
+    let capture_policy = if policy == LocalBufferPolicy::LowLatency {
+        CapturePolicy::LowLatency
+    } else {
+        CapturePolicy::Stable
+    };
+    let (capture, rx) = match audio_capture::start_loopback_with_policy(
+        CaptureFormat::AIRPLAY_DEFAULT,
+        capture_policy,
+    ) {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostics.lock().unwrap().record_failure("capture_start");
+            diagnostics.lock().unwrap().failed();
+            return Err(format!("captura: {error}"));
+        }
+    };
+    diagnostics.lock().unwrap().capture_started(began.elapsed());
+    let key = output_key(first_ip, *first_port);
+    let sender = prepared.sender();
+    diagnostics
+        .lock()
+        .unwrap()
+        .add_output(sender.clone(), prepared.metrics());
+    let senders = Arc::new(Mutex::new(HashMap::from([(key.clone(), sender)])));
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
-    let app_pump = app.clone();
     let pump_senders = senders.clone();
+    let pump_diagnostics = diagnostics.clone();
     let pump = std::thread::Builder::new()
         .name("airplay-pump".into())
         .spawn(move || {
             pump_loop(
-                app_pump,
+                app,
                 rx,
                 pump_senders,
                 sample_rate,
                 channels,
                 stop_thread,
+                pump_diagnostics,
             )
         })
-        .map_err(|e| format!("pump thread: {e}"))?;
+        .map_err(|e| {
+            diagnostics.lock().unwrap().failed();
+            format!("pump thread: {e}")
+        })?;
     let mut active = ActiveStream {
-        outputs,
+        outputs: HashMap::new(),
         senders,
         _capture: capture,
+        diagnostics,
+        policy,
         pump: Some(pump),
         stop,
         latency_ms,
         sample_rate,
         channels,
     };
-    // Start forwarding as soon as the first receiver is ready. Pairing a
-    // second receiver can take seconds; the first must not starve meanwhile.
-    for (ip, port, name, volume) in targets.iter().skip(1) {
-        let (output, sender, rate, channel_count) =
-            open_output(ip, *port, name, *volume, latency_ms).await?;
-        if (rate, channel_count) != (sample_rate, channels) {
-            return Err("los receptores no comparten formato de audio".to_string());
-        }
-        let key = output_key(&output.ip, output.port);
-        active
-            .senders
-            .lock()
-            .map_err(|e| e.to_string())?
-            .insert(key.clone(), sender);
-        active.outputs.insert(key, output);
+    let first = start_output(
+        prepared,
+        first_ip,
+        *first_port,
+        first_name,
+        *first_volume,
+        &active.diagnostics,
+    )
+    .await?;
+    if active.stop.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("capture_interrupted".into());
     }
+    active.outputs.insert(key, first);
+    for (ip, port, name, volume) in targets.iter().skip(1) {
+        attach_output(&mut active, ip, *port, name, *volume).await?;
+    }
+    if active.stop.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("capture_interrupted".into());
+    }
+    active.diagnostics.lock().unwrap().streaming();
     Ok(active)
 }
 
@@ -409,6 +542,7 @@ async fn start_streaming(
         .info(active.sample_rate, active.channels);
     if let Some(mut previous) = slot.replace(active) {
         previous.shutdown();
+        previous.stop_outputs().await;
     }
     Ok(info)
 }
@@ -453,28 +587,23 @@ async fn add_streaming(
     if let Some(output) = active.outputs.get(&key) {
         return Ok(output.info(active.sample_rate, active.channels));
     }
-    let (output, sender, sample_rate, channels) =
-        open_output(&parsed.to_string(), port, &name, volume, active.latency_ms).await?;
-    if (sample_rate, channels) != (active.sample_rate, active.channels) {
-        return Err("los receptores no comparten formato de audio".to_string());
-    }
-    let info = output.info(sample_rate, channels);
-    active
-        .senders
-        .lock()
-        .map_err(|e| e.to_string())?
-        .insert(key.clone(), sender);
-    active.outputs.insert(key, output);
+    attach_output(active, &parsed.to_string(), port, &name, volume).await?;
+    let info = active
+        .outputs
+        .get(&key)
+        .unwrap()
+        .info(active.sample_rate, active.channels);
     Ok(info)
 }
 
 fn pump_loop(
     app: tauri::AppHandle,
-    rx: crossbeam_channel::Receiver<audio_capture::CapturedFrame>,
+    rx: audio_capture::CaptureReceiver,
     senders: std::sync::Arc<Mutex<HashMap<String, cap_core::streaming::LiveFrameSender>>>,
     sample_rate: u32,
     channels: u8,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    diagnostics: SessionRecord,
 ) {
     use cap_core::streaming::LivePcmFrame;
     use std::sync::atomic::Ordering;
@@ -505,11 +634,14 @@ fn pump_loop(
                     } else {
                         samples.as_ref().unwrap().clone()
                     };
-                    if !sender.try_send(LivePcmFrame {
-                        samples: payload,
-                        channels,
-                        sample_rate,
-                    }) {
+                    if !sender.try_send_at(
+                        LivePcmFrame {
+                            samples: payload,
+                            channels,
+                            sample_rate,
+                        },
+                        frame.captured_at,
+                    ) {
                         frames_dropped += 1;
                     } else {
                         frames_forwarded += 1;
@@ -523,6 +655,12 @@ fn pump_loop(
                         max_capture_gap_ms = max_capture_gap.as_millis(),
                         "airplay-pump diagnostics"
                     );
+                    diagnostics.lock().unwrap().update(
+                        rx.diagnostics(),
+                        frames_forwarded,
+                        frames_dropped,
+                        max_capture_gap,
+                    );
                     last_report = Instant::now();
                     max_capture_gap = Duration::ZERO;
                 }
@@ -531,14 +669,28 @@ fn pump_loop(
             Err(_) => {
                 // El canal de captura se cerró sin que nosotros pidamos shutdown:
                 // device removed, driver crash, parec mató al subproceso, etc.
-                unexpected_exit = true;
+                unexpected_exit = !stop.load(Ordering::SeqCst);
                 break;
             }
         }
     }
+    diagnostics.lock().unwrap().update(
+        rx.diagnostics(),
+        frames_forwarded,
+        frames_dropped,
+        max_capture_gap,
+    );
     if unexpected_exit {
+        let notify_active_session = diagnostics.lock().unwrap().can_emit_capture_error();
+        stop.store(true, Ordering::SeqCst);
+        diagnostics.lock().unwrap().record_failure("capture");
+        diagnostics.lock().unwrap().failed();
         tracing::warn!("airplay-pump: canal captura cerrado inesperadamente, emitiendo error");
-        let _ = app.emit("airplay://error", "capture_interrupted");
+        // A failing replacement must not stop the previous healthy receiver.
+        // Preparation failures return synchronously to the switch caller.
+        if notify_active_session {
+            let _ = app.emit("airplay://error", "capture_interrupted");
+        }
     } else {
         tracing::info!("airplay-pump thread exit");
     }
@@ -549,6 +701,7 @@ async fn stop_streaming(state: State<'_, StreamingState>) -> Result<(), String> 
     let mut slot = state.inner.lock().await;
     if let Some(mut active) = slot.take() {
         active.shutdown();
+        active.stop_outputs().await;
     }
     Ok(())
 }
@@ -569,7 +722,13 @@ async fn remove_streaming(
         .lock()
         .map_err(|e| e.to_string())?
         .remove(&key);
-    active.outputs.remove(&key);
+    if let Some(mut output) = active.outputs.remove(&key) {
+        output._heartbeat.shutdown();
+        let _ = tokio::time::timeout(Duration::from_secs(3), async {
+            output.connection.lock().await.stop().await
+        })
+        .await;
+    }
     if active.outputs.is_empty() {
         if let Some(mut empty) = slot.take() {
             empty.shutdown();
@@ -805,6 +964,35 @@ fn get_multi_device(app: tauri::AppHandle) -> Result<bool, String> {
         .unwrap_or(false))
 }
 
+#[tauri::command]
+fn get_experimental_local_buffer(app: tauri::AppHandle) -> Result<bool, String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    Ok(store
+        .get(KEY_LOCAL_BUFFER)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false))
+}
+
+#[tauri::command]
+async fn save_experimental_local_buffer(
+    app: tauri::AppHandle,
+    enabled: bool,
+    state: State<'_, StreamingState>,
+) -> Result<(), String> {
+    let stream = state.inner.lock().await;
+    if stream.is_some() {
+        return Err("stop_before_buffer_change".into());
+    }
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(KEY_LOCAL_BUFFER, serde_json::json!(enabled));
+    store.save().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_audio_diagnostics(state: State<'_, DiagnosticState>) -> Result<String, String> {
+    serde_json::to_string_pretty(&state.report()).map_err(|e| e.to_string())
+}
+
 fn save_latency(app: &tauri::AppHandle, latency_ms: u32) -> Result<(), String> {
     cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
@@ -878,6 +1066,7 @@ async fn confirm_latency(
         // A receiver may reject a second RTSP session to itself. Close the old
         // sessions before reopening them, then restore the old setup on error.
         stream.shutdown();
+        stream.stop_outputs().await;
         drop(stream);
         match prepare_stream(app.clone(), &targets, latency_ms).await {
             Ok(replacement) => *slot = Some(replacement),
@@ -1102,6 +1291,7 @@ pub fn run() {
         .manage(DiscoveryState::default())
         .manage(ConnectionState::default())
         .manage(StreamingState::default())
+        .manage(DiagnosticState::default())
         .invoke_handler(tauri::generate_handler![
             discover_devices,
             start_discovery_stream,
@@ -1128,6 +1318,9 @@ pub fn run() {
             get_latency_cooldown_ms,
             confirm_latency,
             set_tray_language,
+            get_experimental_local_buffer,
+            save_experimental_local_buffer,
+            export_audio_diagnostics,
         ])
         .setup(|app| {
             let tray_items = setup_tray(app.handle())?;

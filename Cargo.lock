@@ -55,7 +55,7 @@ dependencies = [
 [[package]]
 name = "airplay-audio"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=655b2768e2a17aa64f84d0b5b36325018963e909#655b2768e2a17aa64f84d0b5b36325018963e909"
+source = "git+https://github.com/Pabldi08/airplay2-rs?rev=078db7c072e383b3cbefd2de74b5db37a1c11a2e#078db7c072e383b3cbefd2de74b5db37a1c11a2e"
 dependencies = [
  "airplay-core",
  "airplay-crypto",
@@ -79,7 +79,7 @@ dependencies = [
 [[package]]
 name = "airplay-client"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=655b2768e2a17aa64f84d0b5b36325018963e909#655b2768e2a17aa64f84d0b5b36325018963e909"
+source = "git+https://github.com/Pabldi08/airplay2-rs?rev=078db7c072e383b3cbefd2de74b5db37a1c11a2e#078db7c072e383b3cbefd2de74b5db37a1c11a2e"
 dependencies = [
  "airplay-audio",
  "airplay-core",
@@ -102,7 +102,7 @@ dependencies = [
 [[package]]
 name = "airplay-core"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=655b2768e2a17aa64f84d0b5b36325018963e909#655b2768e2a17aa64f84d0b5b36325018963e909"
+source = "git+https://github.com/Pabldi08/airplay2-rs?rev=078db7c072e383b3cbefd2de74b5db37a1c11a2e#078db7c072e383b3cbefd2de74b5db37a1c11a2e"
 dependencies = [
  "serde",
  "thiserror 1.0.69",
@@ -112,7 +112,7 @@ dependencies = [
 [[package]]
 name = "airplay-crypto"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=655b2768e2a17aa64f84d0b5b36325018963e909#655b2768e2a17aa64f84d0b5b36325018963e909"
+source = "git+https://github.com/Pabldi08/airplay2-rs?rev=078db7c072e383b3cbefd2de74b5db37a1c11a2e#078db7c072e383b3cbefd2de74b5db37a1c11a2e"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -138,7 +138,7 @@ dependencies = [
 [[package]]
 name = "airplay-discovery"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=655b2768e2a17aa64f84d0b5b36325018963e909#655b2768e2a17aa64f84d0b5b36325018963e909"
+source = "git+https://github.com/Pabldi08/airplay2-rs?rev=078db7c072e383b3cbefd2de74b5db37a1c11a2e#078db7c072e383b3cbefd2de74b5db37a1c11a2e"
 dependencies = [
  "airplay-core",
  "async-stream",
@@ -154,7 +154,7 @@ dependencies = [
 [[package]]
 name = "airplay-pairing"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=655b2768e2a17aa64f84d0b5b36325018963e909#655b2768e2a17aa64f84d0b5b36325018963e909"
+source = "git+https://github.com/Pabldi08/airplay2-rs?rev=078db7c072e383b3cbefd2de74b5db37a1c11a2e#078db7c072e383b3cbefd2de74b5db37a1c11a2e"
 dependencies = [
  "airplay-core",
  "airplay-crypto",
@@ -168,7 +168,7 @@ dependencies = [
 [[package]]
 name = "airplay-resampler"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=655b2768e2a17aa64f84d0b5b36325018963e909#655b2768e2a17aa64f84d0b5b36325018963e909"
+source = "git+https://github.com/Pabldi08/airplay2-rs?rev=078db7c072e383b3cbefd2de74b5db37a1c11a2e#078db7c072e383b3cbefd2de74b5db37a1c11a2e"
 dependencies = [
  "airplay-core",
  "fastrand",
@@ -179,7 +179,7 @@ dependencies = [
 [[package]]
 name = "airplay-rtsp"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=655b2768e2a17aa64f84d0b5b36325018963e909#655b2768e2a17aa64f84d0b5b36325018963e909"
+source = "git+https://github.com/Pabldi08/airplay2-rs?rev=078db7c072e383b3cbefd2de74b5db37a1c11a2e#078db7c072e383b3cbefd2de74b5db37a1c11a2e"
 dependencies = [
  "airplay-core",
  "airplay-crypto",
@@ -199,7 +199,7 @@ dependencies = [
 [[package]]
 name = "airplay-timing"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=655b2768e2a17aa64f84d0b5b36325018963e909#655b2768e2a17aa64f84d0b5b36325018963e909"
+source = "git+https://github.com/Pabldi08/airplay2-rs?rev=078db7c072e383b3cbefd2de74b5db37a1c11a2e#078db7c072e383b3cbefd2de74b5db37a1c11a2e"
 dependencies = [
  "airplay-core",
  "async-trait",
@@ -345,6 +345,7 @@ dependencies = [
  "cpal",
  "crossbeam-channel",
  "ringbuf",
+ "serde",
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber",

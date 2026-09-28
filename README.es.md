@@ -49,6 +49,18 @@ AirSend está en una fase inicial de desarrollo. La versión actual ya permite e
 
 El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta y auditable para usuarios que quieran enviar audio desde Windows a dispositivos AirPlay compatibles.
 
+## Próxima prueba de búfer local y diagnósticos
+
+La rama de desarrollo añade **Búfer local reducido**, desactivado por defecto,
+y **Descargar diagnóstico**. Para cambiar la opción experimental, para la
+reproducción. El slider sigue controlando por separado el búfer solicitado
+al receptor.
+
+El diagnóstico contiene métricas limitadas por sesión, sin nombres, IP ni
+credenciales. Los tiempos locales no miden el retraso audible del HomePod.
+El procedimiento de comparación está en `docs/phase-01-testing.md`. Estos
+cambios todavía no están en la release publicada 0.1.7.
+
 ## Roadmap
 
 ### Versión actual: 0.1.7

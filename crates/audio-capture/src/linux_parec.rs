@@ -16,8 +16,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use crossbeam_channel::{bounded, Receiver};
-
 use crate::{Capture, CaptureError, CaptureFormat, CapturedFrame};
 
 // 352 frames @ 44.1k = ~8 ms por chunk, exactamente un paquete RTP/ALAC
@@ -79,7 +77,14 @@ fn which(bin: &str) -> Option<std::path::PathBuf> {
 
 pub fn start(
     fmt: CaptureFormat,
-) -> Result<(Box<dyn Capture>, Receiver<CapturedFrame>), CaptureError> {
+) -> Result<(Box<dyn Capture>, crate::CaptureReceiver), CaptureError> {
+    start_with_policy(fmt, crate::CapturePolicy::Stable)
+}
+
+pub fn start_with_policy(
+    fmt: CaptureFormat,
+    policy: crate::CapturePolicy,
+) -> Result<(Box<dyn Capture>, crate::CaptureReceiver), CaptureError> {
     if fmt.channels != 2 {
         return Err(CaptureError::UnsupportedConfig {
             wanted: fmt.sample_rate,
@@ -115,7 +120,7 @@ pub fn start(
         .take()
         .ok_or_else(|| CaptureError::Backend("parec sin stdout".into()))?;
 
-    let (tx, rx) = bounded::<CapturedFrame>(64);
+    let (tx, rx) = crate::queue::capture_channel(policy);
     let running = Arc::new(AtomicBool::new(true));
     let running_thread = running.clone();
     let sample_rate = fmt.sample_rate;
@@ -147,11 +152,7 @@ pub fn start(
                             samples.push(i16::from_le_bytes([s[0], s[1]]));
                         }
                         acc.drain(..usable);
-                        let _ = tx.try_send(CapturedFrame {
-                            samples,
-                            channels: 2,
-                            sample_rate,
-                        });
+                        let _ = tx.try_send(CapturedFrame::new(samples, 2, sample_rate));
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "parec stdout read error");

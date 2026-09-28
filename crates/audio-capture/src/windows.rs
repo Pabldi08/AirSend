@@ -21,7 +21,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{bounded, Receiver};
 use wasapi::{get_default_device, initialize_mta, Direction, SampleType, ShareMode, WaveFormat};
 
 use crate::{Capture, CaptureError, CaptureFormat, CapturedFrame};
@@ -130,7 +129,14 @@ impl Drop for WindowsCapture {
 
 pub fn start(
     fmt: CaptureFormat,
-) -> Result<(Box<dyn Capture>, Receiver<CapturedFrame>), CaptureError> {
+) -> Result<(Box<dyn Capture>, crate::CaptureReceiver), CaptureError> {
+    start_with_policy(fmt, crate::CapturePolicy::Stable)
+}
+
+pub fn start_with_policy(
+    fmt: CaptureFormat,
+    policy: crate::CapturePolicy,
+) -> Result<(Box<dyn Capture>, crate::CaptureReceiver), CaptureError> {
     if fmt.channels != 2 || fmt.sample_rate == 0 {
         return Err(CaptureError::UnsupportedConfig {
             wanted: fmt.sample_rate,
@@ -141,7 +147,7 @@ pub fn start(
     let target_rate = fmt.sample_rate;
     let target_channels = fmt.channels;
 
-    let (tx, rx) = bounded::<CapturedFrame>(64);
+    let (tx, rx) = crate::queue::capture_channel(policy);
     let running = Arc::new(AtomicBool::new(true));
     let running_thread = running.clone();
 
@@ -168,11 +174,21 @@ pub fn start(
     // Esperamos a la inicialización. Si tarda >5 s, asumimos cuelgue.
     let name = match init_rx.recv_timeout(Duration::from_secs(5)) {
         Ok(Ok(name)) => name,
-        Ok(Err(e)) => return Err(CaptureError::Backend(e)),
+        Ok(Err(e)) => {
+            running.store(false, Ordering::SeqCst);
+            let _ = handle.join();
+            return Err(CaptureError::Backend(e));
+        }
         Err(_) => {
+            running.store(false, Ordering::SeqCst);
+            // A driver call cannot be forcibly cancelled; the worker exits as
+            // soon as initialization returns, without starting capture.
+            if handle.is_finished() {
+                let _ = handle.join();
+            }
             return Err(CaptureError::Backend(
                 "WASAPI no completó init en 5 s".into(),
-            ))
+            ));
         }
     };
 
@@ -193,7 +209,7 @@ fn capture_thread_main(
     target_rate: u32,
     target_channels: u16,
     init_tx: &std::sync::mpsc::SyncSender<Result<String, String>>,
-    tx: crossbeam_channel::Sender<CapturedFrame>,
+    tx: crate::CaptureSender,
 ) -> Result<(), String> {
     let _mmcss = register_mmcss();
 
@@ -312,16 +328,15 @@ fn capture_thread_main(
                 samples.push(i16::from_le_bytes([lo, hi]));
             }
 
+            let mut frame = CapturedFrame::new(samples, target_channels, target_rate);
+            let pending_frames = byte_queue.len() / bytes_per_frame;
+            frame.captured_at = Instant::now()
+                - Duration::from_secs_f64(
+                    (pending_frames + CHUNK_FRAMES) as f64 / target_rate as f64,
+                );
             // try_send: si el consumidor (pump → ALAC) está saturado,
             // soltamos el chunk para no inflar latencia indefinidamente.
-            if tx
-                .try_send(CapturedFrame {
-                    samples,
-                    channels: target_channels,
-                    sample_rate: target_rate,
-                })
-                .is_err()
-            {
+            if tx.try_send(frame).is_err() {
                 chunks_dropped += 1;
             }
         }
@@ -342,11 +357,11 @@ fn capture_thread_main(
                 // No acumulamos silencio en la cola. Si vuelve el audio real,
                 // como máximo habrá dos paquetes mudos por delante.
                 if tx.len() < 2 {
-                    match tx.try_send(CapturedFrame {
-                        samples: vec![0i16; chunk_samples],
-                        channels: target_channels,
-                        sample_rate: target_rate,
-                    }) {
+                    match tx.try_send(CapturedFrame::new(
+                        vec![0i16; chunk_samples],
+                        target_channels,
+                        target_rate,
+                    )) {
                         Ok(()) => chunks_silence += 1,
                         Err(_) => chunks_dropped += 1,
                     }

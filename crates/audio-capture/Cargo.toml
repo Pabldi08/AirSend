@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 tracing = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }
 ringbuf = { workspace = true }
 crossbeam-channel = "0.5"

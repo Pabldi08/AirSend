@@ -44,6 +44,13 @@
             <input id="volume" type="range" min="0" max="100" value="20" />
             <output id="vol-out">20%</output>
           </label>
+          <div class="multi-control">
+            <label for="experimental-local-buffer">
+              <input id="experimental-local-buffer" type="checkbox" />
+              <span data-i18n="local_buffer">Búfer local reducido (experimental)</span>
+            </label>
+            <p class="hint" data-i18n="local_buffer_hint">Puede reducir el retardo, pero también causar cortes. Para cambiarlo, para la reproducción. El HomePod puede añadir su propio retardo.</p>
+          </div>
           <div class="latency-control">
             <label class="latency-label" for="latency">
               <span data-i18n="latency">Límite del búfer AirPlay</span>
@@ -63,6 +70,12 @@
             </div>
           </div>
         </div>
+        <details class="manual">
+          <summary data-i18n="diagnostics_summary">Diagnóstico de audio</summary>
+          <p class="hint" data-i18n="diagnostics_hint">Descarga las métricas de las últimas sesiones para comparar retardo y cortes. No incluye nombres, direcciones IP ni credenciales. Las medidas locales no representan el retardo audible del HomePod.</p>
+          <button id="diagnostics-export" type="button" data-i18n="diagnostics_export">Descargar diagnóstico</button>
+          <span id="diagnostics-status" class="status" role="status" aria-live="polite"></span>
+        </details>
         <details class="manual">
           <summary data-i18n="manual_summary">¿No aparece tu HomePod? Añade su IP manualmente</summary>
           <p class="hint" data-i18n="manual_hint">
