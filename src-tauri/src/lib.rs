@@ -501,6 +501,7 @@ async fn prepare_stream(
         LocalBufferPolicy::Stable
     };
     let diagnostics = app.state::<DiagnosticState>().begin(latency_ms, policy);
+    let _preparation = diagnostics::PreparationGuard::new(diagnostics.clone());
     let prepared = match prepare_output(
         first_ip,
         *first_port,
@@ -648,6 +649,7 @@ async fn prepare_synchronized_stream(
         LocalBufferPolicy::Stable
     };
     let diagnostics = app.state::<DiagnosticState>().begin(latency_ms, policy);
+    let _preparation = diagnostics::PreparationGuard::new(diagnostics.clone());
     let descriptors = targets
         .iter()
         .map(|(ip, port, name, _)| {
@@ -684,14 +686,17 @@ async fn prepare_synchronized_stream(
     })
     .await
     .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| {
+        diagnostics.lock().unwrap().record_failure("capture_start");
+        e.to_string()
+    })?;
     diagnostics.lock().unwrap().capture_started(began.elapsed());
     let sender = prepared.sender.clone();
     for metrics in &prepared.metrics {
         diagnostics
             .lock()
             .unwrap()
-            .add_output(sender.clone(), metrics.clone());
+            .add_group_output(sender.clone(), metrics.clone());
     }
     let senders = std::sync::Arc::new(Mutex::new(HashMap::from([(
         output_key(&targets[0].0, targets[0].1),
@@ -739,7 +744,14 @@ async fn prepare_synchronized_stream(
             .map(|(ip, port, _, _)| output_key(ip, *port))
             .collect(),
     };
-    let handle = prepared.start().await.map_err(|e| format!("stream: {e}"))?;
+    let handle = prepared.start().await.map_err(|e| {
+        active
+            .diagnostics
+            .lock()
+            .unwrap()
+            .record_failure(e.stage_code());
+        format!("stream: {e}")
+    })?;
     for ((connection, heartbeat, metrics), (ip, port, name, volume)) in
         handle.outputs.into_iter().zip(targets)
     {

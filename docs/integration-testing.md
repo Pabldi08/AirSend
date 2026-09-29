@@ -16,6 +16,8 @@ La rama `codex/airflash-improvements` reúne las fases 0–6 del plan. Las funci
 
 La reproducción múltiple anterior conserva sesiones independientes. El botón de grupo experimental crea la ruta coordinada de dos receptores. Quitar o perder un miembro detiene todo el grupo; si se activa reconexión se recupera el grupo completo. No se admite añadir un tercer receptor a esa ruta. La identificación `tsid` evita confundir el grupo de una habitación (`gid`) con una pareja estéreo.
 
+En los grupos, `transport_scope: "group"` identifica contadores de envío/encoder compartidos; los heartbeats y tiempos de conexión son por miembro. La ruta independiente mantiene contadores por receptor.
+
 Las pruebas UDP verifican cabeceras RTP idénticas, paquetes cifrados distintos, secuencias/nonces y cierre; no certifican sincronización audible ni asignación L/R. Las métricas locales tampoco representan latencia acústica. Mantener abiertas #2, #12, #13, #14, #20 y #22 hasta las pruebas pertinentes.
 
 ## Comprobar CPU y estado

@@ -410,6 +410,11 @@ fn capture_thread_main(
                 samples.push(i16::from_le_bytes([lo, hi]));
             }
 
+            let pending_frames = byte_queue.len() / bytes_per_frame;
+            let captured_at = Instant::now()
+                - Duration::from_secs_f64(
+                    (pending_frames + CHUNK_FRAMES) as f64 / target_rate as f64,
+                );
             let signal = samples.iter().any(|s| s.unsigned_abs() > 64);
             // Ignore audio queued before the endpoint mute took effect.
             if mute_started.is_some_and(|at| at.elapsed() >= Duration::from_millis(150)) && signal {
@@ -436,11 +441,7 @@ fn capture_thread_main(
                 }
             }
             let mut frame = CapturedFrame::new(samples, target_channels, target_rate);
-            let pending_frames = byte_queue.len() / bytes_per_frame;
-            frame.captured_at = Instant::now()
-                - Duration::from_secs_f64(
-                    (pending_frames + CHUNK_FRAMES) as f64 / target_rate as f64,
-                );
+            frame.captured_at = captured_at;
             // try_send: si el consumidor (pump → ALAC) está saturado,
             // soltamos el chunk para no inflar latencia indefinidamente.
             if tx.try_send(frame).is_err() {

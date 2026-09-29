@@ -13,6 +13,22 @@ pub type SessionRecord = Arc<Mutex<Record>>;
 struct Output {
     sender: LiveDiagnosticsHandle,
     metrics: Arc<StreamMetrics>,
+    transport_scope: &'static str,
+}
+
+pub struct PreparationGuard(SessionRecord);
+impl PreparationGuard {
+    pub fn new(record: SessionRecord) -> Self {
+        Self(record)
+    }
+}
+impl Drop for PreparationGuard {
+    fn drop(&mut self) {
+        let mut record = self.0.lock().unwrap();
+        if record.status == "preparing" {
+            record.failed();
+        }
+    }
 }
 
 pub struct Record {
@@ -35,6 +51,14 @@ impl Record {
         self.outputs.push(Output {
             sender: sender.diagnostics_handle(),
             metrics,
+            transport_scope: "receiver",
+        });
+    }
+    pub fn add_group_output(&mut self, sender: LiveFrameSender, metrics: Arc<StreamMetrics>) {
+        self.outputs.push(Output {
+            sender: sender.diagnostics_handle(),
+            metrics,
+            transport_scope: "group",
         });
     }
     pub fn capture_started(&mut self, elapsed: std::time::Duration) {
@@ -107,7 +131,7 @@ impl Record {
             let s = output.sender.snapshot();
             let (timings, successes, failures) = output.metrics.snapshot();
             serde_json::json!({
-                "receiver": index + 1, "timings": timings,
+                "receiver": index + 1, "transport_scope": output.transport_scope, "timings": timings,
                 "feedback_successes": successes, "feedback_failures": failures,
                 "input_queued_blocks": s.queued_blocks, "input_queue_drops": s.queue_drops,
                 "stale_drops": s.stale_drops, "packets_sent": s.packets_sent, "send_errors": s.send_errors,
