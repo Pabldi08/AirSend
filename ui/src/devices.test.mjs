@@ -77,4 +77,5 @@ test("a room group alone does not imply a stereo pair, and unavailable routes co
   assert.equal(known.size, 2);
   assert.equal(known.get("hardware:aabbccddeeff").available, true);
   assert.deepEqual(routesFor(discovered, known.get("hardware:aabbccddeeff")).map(d => d.port), [7001, 7000]);
+  assert.deepEqual(routesFor(discovered, known.get("hardware:aabbccddeeff"), first).map(d => d.port), [7001, 7000]);
 });

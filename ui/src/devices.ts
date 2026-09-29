@@ -48,7 +48,8 @@ export function routesFor(discovered: Map<string, Device>, device: Device, first
     const preference = device.kind === "homepod" ? isAirPlay : isRaop;
     return Number(preference(b)) - Number(preference(a));
   });
-  if (first) routes.sort((a, b) => Number(b.id === first.id) - Number(a.id === first.id));
+  if (first && routes.some(d => d.id === first.id && d.available !== false))
+    routes.sort((a, b) => Number(b.id === first.id) - Number(a.id === first.id));
   return routes;
 }
 

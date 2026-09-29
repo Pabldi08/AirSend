@@ -268,6 +268,9 @@ fn capture_thread_main(
     let mut generation = notifications.generation.load(Ordering::Relaxed);
     let device = crate::endpoints::select(selected_id)?;
     let endpoint_id = device.get_id().map_err(|e| e.to_string())?;
+    if mute_request.lock().unwrap().is_some() {
+        mute_state.store(1, Ordering::SeqCst);
+    }
     let mut mute: Option<crate::endpoints::MuteGuard> = None;
     let mut mute_started: Option<Instant> = None;
     let mut signal_after_mute = false;
