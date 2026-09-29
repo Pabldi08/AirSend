@@ -23,10 +23,10 @@ async-trait = "0.1"
 # MMCSS correcta para el sender) porque el upstream no compila en MSVC tal cual.
 # Renombramos los paquetes para no colisionar con nuestro crate local (también
 # llamado airplay-core en el repo upstream).
-ap2rs-pairing = { package = "airplay-pairing", git = "https://github.com/Pabldi08/airplay2-rs", rev = "078db7c072e383b3cbefd2de74b5db37a1c11a2e" }
-ap2rs-core = { package = "airplay-core", git = "https://github.com/Pabldi08/airplay2-rs", rev = "078db7c072e383b3cbefd2de74b5db37a1c11a2e" }
-ap2rs-client = { package = "airplay-client", git = "https://github.com/Pabldi08/airplay2-rs", rev = "078db7c072e383b3cbefd2de74b5db37a1c11a2e" }
-ap2rs-audio = { package = "airplay-audio", git = "https://github.com/Pabldi08/airplay2-rs", rev = "078db7c072e383b3cbefd2de74b5db37a1c11a2e" }
+ap2rs-pairing = { package = "airplay-pairing", git = "https://github.com/Pabldi08/airplay2-rs", rev = "dc66e2b3df1ad87a34fd9c859ec452bd787154e1" }
+ap2rs-core = { package = "airplay-core", git = "https://github.com/Pabldi08/airplay2-rs", rev = "dc66e2b3df1ad87a34fd9c859ec452bd787154e1" }
+ap2rs-client = { package = "airplay-client", git = "https://github.com/Pabldi08/airplay2-rs", rev = "dc66e2b3df1ad87a34fd9c859ec452bd787154e1" }
+ap2rs-audio = { package = "airplay-audio", git = "https://github.com/Pabldi08/airplay2-rs", rev = "dc66e2b3df1ad87a34fd9c859ec452bd787154e1" }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
@@ -53,3 +53,8 @@ path = "../audio-capture"
 
 [dev-dependencies.crossbeam-channel]
 version = "0.5"
+
+[dependencies.ap2rs-discovery]
+package = "airplay-discovery"
+git = "https://github.com/Pabldi08/airplay2-rs"
+rev = "dc66e2b3df1ad87a34fd9c859ec452bd787154e1"

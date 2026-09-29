@@ -38,6 +38,7 @@ async fn main() {
         mac: None,
         model: None,
         features: None,
+        advertised: None,
     };
 
     match pair_homepod(desc).await {

@@ -78,8 +78,11 @@ impl Record {
             );
         }
     }
-    pub fn can_emit_capture_error(&self) -> bool {
-        self.status == "streaming"
+    pub fn send_errors(&self) -> u64 {
+        self.outputs
+            .iter()
+            .map(|o| o.sender.snapshot().send_errors)
+            .sum()
     }
     pub fn streaming(&mut self) {
         self.status = "streaming";

@@ -59,17 +59,13 @@ The main goal of the project is to offer a free, open and auditable
 alternative for users who want to stream audio from Windows to
 AirPlay-compatible devices.
 
-## Upcoming audio diagnostics and local buffer trial
+## Integrated improvements under validation
 
-The development branch adds an opt-in **Reduced local buffer** setting and a
-manual **Download diagnostics** action. The stable local policy remains the
-default. Stop playback before changing the experimental option; the latency
-slider still controls the requested receiver buffer separately.
+The development integration fixes timing-worker CPU leaks and adds bounded audio diagnostics, optional reduced local buffers, receiver metadata preservation, Windows output selection and reversible local mute, cancellable sessions with optional recovery, per-receiver settings/volume and manual access to official updates.
 
-The diagnostics contain bounded session metrics without device names, IP
-addresses or credentials. Local send timings do not measure audible HomePod
-delay. See `docs/phase-01-testing.md` for the comparison procedure. These
-changes are not included in the published 0.1.7 release.
+Configured stereo pairs and synchronized two-HomePod groups are experimental and opt-in. They share a live encoder and RTP timeline while preserving receiver encryption. Real stereo channels, drift, Windows mute behavior and third-party playback still require hardware validation. The existing stable buffer policy remains the default.
+
+See [the integration test guide](docs/integration-testing.md) and [the latency comparison](docs/phase-01-testing.md). CI produces an NSIS test installer and `SHA256SUMS`; diagnostics identify its commit without names, addresses or credentials. These changes are not included in the published 0.1.7 release.
 
 ## Roadmap
 
@@ -91,15 +87,15 @@ changes are not included in the published 0.1.7 release.
 
 ### Next improvements
 
-- [ ] Auto-generated release notes from `git log` in the workflow
-- [ ] Minimal unit tests in `crates/airplay-core` (probe parser, stream config builder, pump-loop smoke)
+- [x] Auto-generated release notes from `git log` in the workflow
+- [x] Regression tests for latency, capture queues, device metadata, preferences and session cancellation
 - [ ] Validation on more hardware (HomePod gen 1, mini, Apple TV, AirPort Express)
 - [ ] Technical docs on AirPlay 2 and pairing under `/docs`
 - [ ] EV code-signing certificate to drop the SmartScreen warning (~€200/year, budget decision)
 
 ### Future
 
-- [ ] Validate experimental multi-device playback on multiple receivers and add clock synchronization
+- [ ] Validate experimental multi-device playback, clock synchronization and stereo channels on real HomePods
 - [ ] Per-application audio capture (WASAPI process-loopback, Win10 1903+)
 - [ ] Upstream PR to `lmcgartland/airplay2-rs` with the two Windows patches
 - [ ] Stable support for other AirPlay 2 receivers (Apple TV, AirPort Express, third-party speakers)

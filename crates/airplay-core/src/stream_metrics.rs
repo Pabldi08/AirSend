@@ -19,6 +19,7 @@ pub struct StreamMetrics {
     timings: Mutex<StreamTimings>,
     feedback_failures: AtomicU64,
     feedback_successes: AtomicU64,
+    consecutive_failures: AtomicU64,
 }
 
 impl Default for StreamMetrics {
@@ -28,6 +29,7 @@ impl Default for StreamMetrics {
             timings: Mutex::new(StreamTimings::default()),
             feedback_failures: AtomicU64::new(0),
             feedback_successes: AtomicU64::new(0),
+            consecutive_failures: AtomicU64::new(0),
         }
     }
 }
@@ -49,10 +51,15 @@ impl StreamMetrics {
     }
     pub(crate) fn feedback(&self, success: bool) {
         if success {
+            self.consecutive_failures.store(0, Ordering::Relaxed);
             self.feedback_successes.fetch_add(1, Ordering::Relaxed);
         } else {
+            self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
             self.feedback_failures.fetch_add(1, Ordering::Relaxed);
         }
+    }
+    pub fn unhealthy(&self) -> bool {
+        self.consecutive_failures.load(Ordering::Relaxed) >= 3
     }
     pub fn snapshot(&self) -> (StreamTimings, u64, u64) {
         (

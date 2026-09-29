@@ -1,6 +1,11 @@
 mod diagnostics;
+mod preferences;
+mod session;
+use cap_core::discovery::DiscoveryEvent;
 use cap_core::streaming::{LocalBufferPolicy, PreparedLiveStream};
 use diagnostics::{DiagnosticState, SessionRecord};
+use preferences::{AudioOptions, ReceiverPreferences, ReceiverPreferencesPatch};
+use session::{SessionControl, SessionEvent};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Mutex;
@@ -20,6 +25,7 @@ use tracing_subscriber::EnvFilter;
 
 /// Nombre del archivo de la store en `%APPDATA%/<bundle-id>/`. Lo lleva
 /// `tauri-plugin-store` por nosotros — sólo necesitamos una clave estable.
+static RECEIVER_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 const STORE_FILE: &str = "settings.json";
 const KEY_LAST_DEVICE: &str = "last_device";
 const KEY_VOLUME: &str = "volume";
@@ -143,6 +149,7 @@ struct DiscoveryState {
 /// porque tiene streams TCP/UDP; usamos un Mutex async para acceso seguro.
 #[derive(Default)]
 struct ConnectionState {
+    control: SessionControl,
     inner: tokio::sync::Mutex<Option<PairedSession>>,
 }
 
@@ -155,6 +162,8 @@ struct ActiveOutput {
     port: u16,
     name: String,
     volume: f32,
+    metrics: std::sync::Arc<cap_core::stream_metrics::StreamMetrics>,
+    volume_read_supported: Option<bool>,
 }
 
 impl ActiveOutput {
@@ -173,7 +182,7 @@ impl ActiveOutput {
 struct ActiveStream {
     outputs: HashMap<String, ActiveOutput>,
     senders: std::sync::Arc<Mutex<HashMap<String, cap_core::streaming::LiveFrameSender>>>,
-    _capture: Box<dyn audio_capture::Capture>,
+    _capture: Option<Box<dyn audio_capture::Capture>>,
     diagnostics: SessionRecord,
     policy: LocalBufferPolicy,
     pump: Option<std::thread::JoinHandle<()>>,
@@ -181,18 +190,36 @@ struct ActiveStream {
     latency_ms: u32,
     sample_rate: u32,
     channels: u8,
+    generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    group_mode: bool,
+    target_order: Vec<String>,
 }
 
 impl ActiveStream {
+    fn apply_mute(&self, app: &tauri::AppHandle) -> Result<(), String> {
+        if get_audio_options(app.clone())?.mute_local {
+            let path = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| e.to_string())?
+                .join("local-mute-recovery.json");
+            self._capture
+                .as_ref()
+                .ok_or("capture_interrupted")?
+                .request_local_mute(path)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
     async fn stop_outputs(&mut self) {
         for output in self.outputs.values_mut() {
             output._heartbeat.shutdown();
             let stopped = tokio::time::timeout(Duration::from_secs(3), async {
-                output.connection.lock().await.stop().await
+                output.connection.lock().await.disconnect().await
             })
             .await;
             if !matches!(stopped, Ok(Ok(()))) {
-                tracing::warn!("AirPlay output did not finish FLUSH within the shutdown deadline");
+                tracing::warn!("AirPlay output did not disconnect within the shutdown deadline");
             }
         }
     }
@@ -202,6 +229,9 @@ impl ActiveStream {
             let _ = h.join();
         }
         self.senders.lock().unwrap().clear();
+        if let Some(capture) = self._capture.take() {
+            capture.stop();
+        }
         self.diagnostics.lock().unwrap().finish();
         // _heartbeat se aborta solo al dropearse.
     }
@@ -215,8 +245,11 @@ impl Drop for ActiveStream {
 
 #[derive(Default)]
 struct StreamingState {
+    control: SessionControl,
+    operation: tokio::sync::Mutex<()>,
     inner: tokio::sync::Mutex<Option<ActiveStream>>,
     last_latency_change: tokio::sync::Mutex<Option<Instant>>,
+    phase: Mutex<(u64, &'static str)>,
 }
 
 fn output_key(ip: &str, port: u16) -> String {
@@ -257,21 +290,33 @@ async fn start_discovery_stream(
             return Ok(());
         }
         let discovery = Discovery::new().map_err(|e| e.to_string())?;
-        let rx = discovery.browse().map_err(|e| e.to_string())?;
+        let rx = discovery.browse_events().map_err(|e| e.to_string())?;
         *slot = Some(discovery);
         rx
     };
 
     let app_pump = app.clone();
     tauri::async_runtime::spawn(async move {
-        while let Some(device) = rx.recv().await {
-            if let Some(state) = app_pump.try_state::<DiscoveryState>() {
-                if let Ok(mut cache) = state.cache.lock() {
-                    cache.insert(device.id.clone(), device.clone());
+        while let Some(event) = rx.recv().await {
+            match event {
+                DiscoveryEvent::Resolved(device) => {
+                    if let Some(state) = app_pump.try_state::<DiscoveryState>() {
+                        if let Ok(mut cache) = state.cache.lock() {
+                            cache.insert(device.id.clone(), device.clone());
+                        }
+                    }
+                    let _ = app_pump.emit("airplay://device", &device);
                 }
-            }
-            if app_pump.emit("airplay://device", &device).is_err() {
-                break;
+                DiscoveryEvent::Removed(id) => {
+                    if let Some(state) = app_pump.try_state::<DiscoveryState>() {
+                        if let Ok(mut cache) = state.cache.lock() {
+                            if let Some(device) = cache.get_mut(&id) {
+                                device.available = false;
+                            }
+                        }
+                    }
+                    let _ = app_pump.emit("airplay://device-removed", &id);
+                }
             }
         }
     });
@@ -298,6 +343,48 @@ struct StreamingInfo {
     volume: f32,
 }
 
+fn resolve_descriptor(
+    app: &tauri::AppHandle,
+    device_id: Option<&str>,
+    ip: IpAddr,
+    port: u16,
+    name: &str,
+) -> Result<DeviceDescriptor, String> {
+    let state = app.state::<DiscoveryState>();
+    let cache = state.cache.lock().map_err(|e| e.to_string())?;
+    let route = if let Some(id) = device_id {
+        cache
+            .get(id)
+            .filter(|d| d.port == port && d.addresses.contains(&ip))
+    } else {
+        cache
+            .values()
+            .find(|d| d.port == port && d.addresses.contains(&ip) && !d.manual)
+            .or_else(|| {
+                cache
+                    .values()
+                    .find(|d| d.port == port && d.addresses.contains(&ip))
+            })
+    };
+    if device_id.is_some() && route.is_none() {
+        return Err("receiver_unavailable".into());
+    }
+    match route {
+        Some(device) => device
+            .descriptor(ip, &cache.values().cloned().collect::<Vec<_>>())
+            .map_err(|e| e.to_string()),
+        None => Ok(DeviceDescriptor {
+            ip,
+            port,
+            name: name.into(),
+            mac: None,
+            model: None,
+            features: None,
+            advertised: None,
+        }),
+    }
+}
+
 async fn prepare_output(
     ip: &str,
     port: u16,
@@ -306,16 +393,10 @@ async fn prepare_output(
     latency_ms: u32,
     policy: LocalBufferPolicy,
     diagnostics: &SessionRecord,
+    app: &tauri::AppHandle,
 ) -> Result<PreparedLiveStream, String> {
     let parsed: IpAddr = ip.parse().map_err(|e| format!("IP inválida: {e}"))?;
-    let descriptor = DeviceDescriptor {
-        ip: parsed,
-        port,
-        name: name.to_string(),
-        mac: None,
-        model: None,
-        features: None,
-    };
+    let descriptor = resolve_descriptor(app, None, parsed, port, name)?;
     cap_core::streaming::prepare_live_stream(descriptor, Some(volume), Some(latency_ms), policy)
         .await
         .map_err(|e| {
@@ -332,6 +413,7 @@ async fn start_output(
     volume: f32,
     diagnostics: &SessionRecord,
 ) -> Result<ActiveOutput, String> {
+    let metrics = prepared.metrics();
     let handle = prepared.start().await.map_err(|e| {
         diagnostics.lock().unwrap().record_failure(e.stage_code());
         format!("stream: {e}")
@@ -344,6 +426,8 @@ async fn start_output(
         port,
         name: name.to_string(),
         volume,
+        metrics,
+        volume_read_supported: None,
     })
 }
 
@@ -353,6 +437,7 @@ async fn attach_output(
     port: u16,
     name: &str,
     volume: f32,
+    app: &tauri::AppHandle,
 ) -> Result<(), String> {
     let prepared = prepare_output(
         ip,
@@ -362,6 +447,7 @@ async fn attach_output(
         active.latency_ms,
         active.policy,
         &active.diagnostics,
+        app,
     )
     .await?;
     if (prepared.sample_rate(), prepared.channels()) != (active.sample_rate, active.channels) {
@@ -402,6 +488,7 @@ async fn prepare_stream(
     app: tauri::AppHandle,
     targets: &[(String, u16, String, f32)],
     latency_ms: u32,
+    generation: u64,
 ) -> Result<ActiveStream, String> {
     use audio_capture::{CaptureFormat, CapturePolicy};
     use std::sync::{atomic::AtomicBool, Arc};
@@ -422,6 +509,7 @@ async fn prepare_stream(
         latency_ms,
         policy,
         &diagnostics,
+        &app,
     )
     .await
     {
@@ -439,10 +527,17 @@ async fn prepare_stream(
     } else {
         CapturePolicy::Stable
     };
-    let (capture, rx) = match audio_capture::start_loopback_with_policy(
-        CaptureFormat::AIRPLAY_DEFAULT,
-        capture_policy,
-    ) {
+    let audio_options = get_audio_options(app.clone())?;
+    let (capture, rx) = match tokio::task::spawn_blocking(move || {
+        audio_capture::start_loopback_with_device(
+            CaptureFormat::AIRPLAY_DEFAULT,
+            capture_policy,
+            audio_options.device_id,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    {
         Ok(value) => value,
         Err(error) => {
             diagnostics.lock().unwrap().record_failure("capture_start");
@@ -462,17 +557,21 @@ async fn prepare_stream(
     let stop_thread = stop.clone();
     let pump_senders = senders.clone();
     let pump_diagnostics = diagnostics.clone();
+    let pump_app = app.clone();
+    let generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(generation));
+    let pump_generation = generation.clone();
     let pump = std::thread::Builder::new()
         .name("airplay-pump".into())
         .spawn(move || {
             pump_loop(
-                app,
+                pump_app,
                 rx,
                 pump_senders,
                 sample_rate,
                 channels,
                 stop_thread,
                 pump_diagnostics,
+                pump_generation,
             )
         })
         .map_err(|e| {
@@ -482,7 +581,7 @@ async fn prepare_stream(
     let mut active = ActiveStream {
         outputs: HashMap::new(),
         senders,
-        _capture: capture,
+        _capture: Some(capture),
         diagnostics,
         policy,
         pump: Some(pump),
@@ -490,6 +589,12 @@ async fn prepare_stream(
         latency_ms,
         sample_rate,
         channels,
+        generation,
+        group_mode: false,
+        target_order: targets
+            .iter()
+            .map(|(ip, port, _, _)| output_key(ip, *port))
+            .collect(),
     };
     let first = start_output(
         prepared,
@@ -505,7 +610,152 @@ async fn prepare_stream(
     }
     active.outputs.insert(key, first);
     for (ip, port, name, volume) in targets.iter().skip(1) {
-        attach_output(&mut active, ip, *port, name, *volume).await?;
+        attach_output(&mut active, ip, *port, name, *volume, &app).await?;
+    }
+    if active.stop.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("capture_interrupted".into());
+    }
+    active.diagnostics.lock().unwrap().streaming();
+    Ok(active)
+}
+
+async fn prepare_targets(
+    app: tauri::AppHandle,
+    targets: &[(String, u16, String, f32)],
+    latency_ms: u32,
+    generation: u64,
+    group_mode: bool,
+) -> Result<ActiveStream, String> {
+    if group_mode {
+        prepare_synchronized_stream(app, targets, latency_ms, generation).await
+    } else {
+        prepare_stream(app, targets, latency_ms, generation).await
+    }
+}
+
+async fn prepare_synchronized_stream(
+    app: tauri::AppHandle,
+    targets: &[(String, u16, String, f32)],
+    latency_ms: u32,
+    generation: u64,
+) -> Result<ActiveStream, String> {
+    if targets.len() != 2 {
+        return Err("group_requires_two_receivers".into());
+    }
+    let policy = if get_experimental_local_buffer(app.clone())? {
+        LocalBufferPolicy::LowLatency
+    } else {
+        LocalBufferPolicy::Stable
+    };
+    let diagnostics = app.state::<DiagnosticState>().begin(latency_ms, policy);
+    let descriptors = targets
+        .iter()
+        .map(|(ip, port, name, _)| {
+            resolve_descriptor(
+                &app,
+                None,
+                ip.parse().map_err(|_| "invalid_ip")?,
+                *port,
+                name,
+            )
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let volumes = targets.iter().map(|t| t.3).collect::<Vec<_>>();
+    let prepared =
+        cap_core::streaming::prepare_group_live_stream(descriptors, &volumes, latency_ms, policy)
+            .await
+            .map_err(|e| {
+                diagnostics.lock().unwrap().record_failure(e.stage_code());
+                format!("stream: {e}")
+            })?;
+    let options = get_audio_options(app.clone())?;
+    let capture_policy = if policy == LocalBufferPolicy::LowLatency {
+        audio_capture::CapturePolicy::LowLatency
+    } else {
+        audio_capture::CapturePolicy::Stable
+    };
+    let began = Instant::now();
+    let (capture, rx) = tokio::task::spawn_blocking(move || {
+        audio_capture::start_loopback_with_device(
+            audio_capture::CaptureFormat::AIRPLAY_DEFAULT,
+            capture_policy,
+            options.device_id,
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    diagnostics.lock().unwrap().capture_started(began.elapsed());
+    let sender = prepared.sender.clone();
+    for metrics in &prepared.metrics {
+        diagnostics
+            .lock()
+            .unwrap()
+            .add_output(sender.clone(), metrics.clone());
+    }
+    let senders = std::sync::Arc::new(Mutex::new(HashMap::from([(
+        output_key(&targets[0].0, targets[0].1),
+        sender,
+    )])));
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (pump_senders, pump_stop, pump_diagnostics, pump_app) = (
+        senders.clone(),
+        stop.clone(),
+        diagnostics.clone(),
+        app.clone(),
+    );
+    let generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(generation));
+    let pump_generation = generation.clone();
+    let pump = std::thread::Builder::new()
+        .name("airplay-group-pump".into())
+        .spawn(move || {
+            pump_loop(
+                pump_app,
+                rx,
+                pump_senders,
+                44100,
+                2,
+                pump_stop,
+                pump_diagnostics,
+                pump_generation,
+            )
+        })
+        .map_err(|e| e.to_string())?;
+    let mut active = ActiveStream {
+        outputs: HashMap::new(),
+        senders,
+        _capture: Some(capture),
+        diagnostics,
+        policy,
+        pump: Some(pump),
+        stop,
+        latency_ms,
+        sample_rate: 44100,
+        channels: 2,
+        generation,
+        group_mode: true,
+        target_order: targets
+            .iter()
+            .map(|(ip, port, _, _)| output_key(ip, *port))
+            .collect(),
+    };
+    let handle = prepared.start().await.map_err(|e| format!("stream: {e}"))?;
+    for ((connection, heartbeat, metrics), (ip, port, name, volume)) in
+        handle.outputs.into_iter().zip(targets)
+    {
+        active.outputs.insert(
+            output_key(ip, *port),
+            ActiveOutput {
+                connection,
+                _heartbeat: heartbeat,
+                ip: ip.clone(),
+                port: *port,
+                name: name.clone(),
+                volume: *volume,
+                metrics,
+                volume_read_supported: None,
+            },
+        );
     }
     if active.stop.load(std::sync::atomic::Ordering::SeqCst) {
         return Err("capture_interrupted".into());
@@ -515,8 +765,89 @@ async fn prepare_stream(
 }
 
 #[tauri::command]
+async fn start_group_streaming(
+    app: tauri::AppHandle,
+    device_ids: Vec<String>,
+    stereo_pair: bool,
+    latency_ms: u32,
+    state: State<'_, StreamingState>,
+) -> Result<Vec<StreamingInfo>, String> {
+    if device_ids.len() != 2 || device_ids[0] == device_ids[1] {
+        return Err("group_requires_two_receivers".into());
+    }
+    let targets = {
+        let discovery = app.state::<DiscoveryState>();
+        let cache = discovery.cache.lock().map_err(|e| e.to_string())?;
+        let devices = device_ids
+            .iter()
+            .map(|id| {
+                cache
+                    .get(id)
+                    .filter(|d| d.available)
+                    .cloned()
+                    .ok_or_else(|| "receiver_unavailable".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if devices[0].receiver_id() == devices[1].receiver_id() {
+            return Err("group_requires_two_receivers".into());
+        }
+        if stereo_pair
+            && (devices[0].tight_sync_id.is_none()
+                || devices[0].tight_sync_id != devices[1].tight_sync_id)
+        {
+            return Err("incomplete_stereo_pair".into());
+        }
+        devices
+            .into_iter()
+            .map(|d| {
+                let ip = d
+                    .addresses
+                    .iter()
+                    .find(|ip| ip.is_ipv4())
+                    .or(d.addresses.first())
+                    .ok_or_else(|| "receiver_unavailable".to_string())?;
+                let preferences = get_receiver_preferences(app.clone(), d.receiver_id())?;
+                Ok((ip.to_string(), d.port, d.name, preferences.volume))
+            })
+            .collect::<Result<Vec<_>, String>>()?
+    };
+    let mut token = state.control.begin();
+    let generation = token.generation;
+    let _operation = state.operation.lock().await;
+    emit_session(&app, generation, "preparing");
+    let prepared = tokio::select! { biased; _ = token.cancelled() => return Err("session_cancelled".into()), result = prepare_synchronized_stream(app.clone(), &targets, latency_ms, generation) => result };
+    let mut active = match prepared {
+        Ok(value) => value,
+        Err(error) => {
+            monitor_active(&app, &state, generation).await;
+            return Err(error);
+        }
+    };
+    let info = active.outputs.values().map(|o| o.info(44100, 2)).collect();
+    let previous = {
+        let mut slot = state.inner.lock().await;
+        if state.control.current() != generation {
+            active.shutdown();
+            return Err("session_cancelled".into());
+        }
+        slot.replace(active)
+    };
+    if let Some(mut previous) = previous {
+        previous.shutdown();
+        previous.stop_outputs().await;
+    }
+    if let Some(active) = state.inner.lock().await.as_ref() {
+        let _ = active.apply_mute(&app);
+    }
+    start_session_monitor(app.clone(), generation);
+    emit_session(&app, generation, "streaming");
+    Ok(info)
+}
+
+#[tauri::command]
 async fn start_streaming(
     app: tauri::AppHandle,
+    device_id: Option<String>,
     ip: String,
     port: Option<u16>,
     name: Option<String>,
@@ -531,19 +862,53 @@ async fn start_streaming(
         .unwrap_or(cap_core::streaming::DEFAULT_INITIAL_VOLUME)
         .clamp(0.0, 1.0);
     let latency_ms = latency_ms.unwrap_or(cap_core::streaming::DEFAULT_LATENCY_MS);
-    let mut slot = state.inner.lock().await;
-    let active =
-        prepare_stream(app, &[(parsed.to_string(), port, name, volume)], latency_ms).await?;
+    if !volume.is_finite() {
+        return Err("invalid_volume".into());
+    }
+    resolve_descriptor(&app, device_id.as_deref(), parsed, port, &name)?;
+    let mut token = state.control.begin();
+    let _operation = state.operation.lock().await;
+    if token.generation != state.control.current() {
+        return Err("session_cancelled".into());
+    }
+    let generation = token.generation;
+    emit_session(&app, generation, "preparing");
+    let targets = [(parsed.to_string(), port, name, volume)];
+    let prepared = tokio::select! {
+        biased;
+        _ = token.cancelled() => return Err("session_cancelled".into()),
+        result = prepare_stream(app.clone(), &targets, latency_ms, generation) => result,
+    };
+    let mut active = match prepared {
+        Ok(value) => value,
+        Err(error) => {
+            monitor_active(&app, &state, generation).await;
+            return Err(error);
+        }
+    };
     let info = active
         .outputs
         .values()
         .next()
         .unwrap()
         .info(active.sample_rate, active.channels);
-    if let Some(mut previous) = slot.replace(active) {
+    let previous = {
+        let mut slot = state.inner.lock().await;
+        if generation != state.control.current() {
+            active.shutdown();
+            return Err("session_cancelled".into());
+        }
+        slot.replace(active)
+    };
+    if let Some(mut previous) = previous {
         previous.shutdown();
         previous.stop_outputs().await;
     }
+    if let Some(active) = state.inner.lock().await.as_ref() {
+        let _ = active.apply_mute(&app);
+    }
+    start_session_monitor(app.clone(), generation);
+    emit_session(&app, generation, "streaming");
     Ok(info)
 }
 
@@ -551,6 +916,7 @@ async fn start_streaming(
 #[tauri::command]
 async fn add_streaming(
     app: tauri::AppHandle,
+    device_id: Option<String>,
     ip: String,
     port: Option<u16>,
     name: Option<String>,
@@ -564,46 +930,94 @@ async fn add_streaming(
     let volume = volume
         .unwrap_or(cap_core::streaming::DEFAULT_INITIAL_VOLUME)
         .clamp(0.0, 1.0);
+    if !volume.is_finite() {
+        return Err("invalid_volume".into());
+    }
+    resolve_descriptor(&app, device_id.as_deref(), parsed, port, &name)?;
+    let mut token = state.control.begin();
+    let _operation = state.operation.lock().await;
+    if token.generation != state.control.current() {
+        return Err("session_cancelled".into());
+    }
     let mut slot = state.inner.lock().await;
     let Some(active) = slot.as_mut() else {
         let latency = latency_ms.unwrap_or(cap_core::streaming::DEFAULT_LATENCY_MS);
-        let stream =
-            prepare_stream(app, &[(parsed.to_string(), port, name, volume)], latency).await?;
+        let generation = token.generation;
+        let targets = [(parsed.to_string(), port, name, volume)];
+        drop(slot);
+        let stream = tokio::select! { biased; _ = token.cancelled() => return Err("session_cancelled".into()), result = prepare_stream(
+            app.clone(),
+            &targets,
+            latency,
+            generation,
+        ) => result? };
         let info = stream
             .outputs
             .values()
             .next()
             .unwrap()
             .info(stream.sample_rate, stream.channels);
+        let mut slot = state.inner.lock().await;
+        if state.control.current() != token.generation {
+            return Err("session_cancelled".into());
+        }
         *slot = Some(stream);
+        drop(slot);
+        monitor_active(&app, &state, token.generation).await;
         return Ok(info);
     };
+    if active.group_mode {
+        drop(slot);
+        monitor_active(&app, &state, token.generation).await;
+        return Err("stop_before_group_change".into());
+    }
     if let Some(requested) = latency_ms {
         if requested != active.latency_ms {
+            drop(slot);
+            monitor_active(&app, &state, token.generation).await;
             return Err("la latencia no coincide con la reproducción actual".to_string());
         }
     }
     let key = output_key(&parsed.to_string(), port);
     if let Some(output) = active.outputs.get(&key) {
-        return Ok(output.info(active.sample_rate, active.channels));
+        let info = output.info(active.sample_rate, active.channels);
+        drop(slot);
+        monitor_active(&app, &state, token.generation).await;
+        return Ok(info);
     }
-    attach_output(active, &parsed.to_string(), port, &name, volume).await?;
+    let address = parsed.to_string();
+    let attached = tokio::select! {
+        biased;
+        _ = token.cancelled() => Err("session_cancelled".into()),
+        result = attach_output(active, &address, port, &name, volume, &app) => result,
+    };
+    if let Err(error) = attached {
+        active.senders.lock().unwrap().remove(&key);
+        drop(slot);
+        monitor_active(&app, &state, token.generation).await;
+        return Err(error);
+    }
+
+    active.target_order.push(key.clone());
     let info = active
         .outputs
         .get(&key)
         .unwrap()
         .info(active.sample_rate, active.channels);
+    drop(slot);
+    monitor_active(&app, &state, token.generation).await;
     Ok(info)
 }
 
 fn pump_loop(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     rx: audio_capture::CaptureReceiver,
     senders: std::sync::Arc<Mutex<HashMap<String, cap_core::streaming::LiveFrameSender>>>,
     sample_rate: u32,
     channels: u8,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     diagnostics: SessionRecord,
+    generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
 ) {
     use cap_core::streaming::LivePcmFrame;
     use std::sync::atomic::Ordering;
@@ -681,25 +1095,27 @@ fn pump_loop(
         max_capture_gap,
     );
     if unexpected_exit {
-        let notify_active_session = diagnostics.lock().unwrap().can_emit_capture_error();
         stop.store(true, Ordering::SeqCst);
         diagnostics.lock().unwrap().record_failure("capture");
         diagnostics.lock().unwrap().failed();
-        tracing::warn!("airplay-pump: canal captura cerrado inesperadamente, emitiendo error");
-        // A failing replacement must not stop the previous healthy receiver.
-        // Preparation failures return synchronously to the switch caller.
-        if notify_active_session {
-            let _ = app.emit("airplay://error", "capture_interrupted");
-        }
+        tracing::warn!(
+            generation = generation.load(Ordering::SeqCst),
+            "capture stopped unexpectedly; session monitor will recover or report the failure"
+        );
     } else {
         tracing::info!("airplay-pump thread exit");
     }
 }
 
 #[tauri::command]
-async fn stop_streaming(state: State<'_, StreamingState>) -> Result<(), String> {
-    let mut slot = state.inner.lock().await;
-    if let Some(mut active) = slot.take() {
+async fn stop_streaming(
+    app: tauri::AppHandle,
+    state: State<'_, StreamingState>,
+) -> Result<(), String> {
+    state.control.cancel();
+    emit_session(&app, state.control.current(), "disconnected");
+    let active = state.inner.lock().await.take();
+    if let Some(mut active) = active {
         active.shutdown();
         active.stop_outputs().await;
     }
@@ -716,16 +1132,25 @@ async fn remove_streaming(
     let Some(active) = slot.as_mut() else {
         return Ok(());
     };
+    if active.group_mode {
+        let mut group = slot.take().unwrap();
+        drop(slot);
+        state.control.cancel();
+        group.shutdown();
+        group.stop_outputs().await;
+        return Ok(());
+    }
     let key = output_key(&ip, port);
     active
         .senders
         .lock()
         .map_err(|e| e.to_string())?
         .remove(&key);
+    active.target_order.retain(|target| target != &key);
     if let Some(mut output) = active.outputs.remove(&key) {
         output._heartbeat.shutdown();
         let _ = tokio::time::timeout(Duration::from_secs(3), async {
-            output.connection.lock().await.stop().await
+            output.connection.lock().await.disconnect().await
         })
         .await;
     }
@@ -738,18 +1163,51 @@ async fn remove_streaming(
 }
 
 #[tauri::command]
-async fn set_stream_volume(volume: f32, state: State<'_, StreamingState>) -> Result<f32, String> {
+async fn set_stream_volume(
+    app: tauri::AppHandle,
+    volume: f32,
+    state: State<'_, StreamingState>,
+) -> Result<f32, String> {
     let mut slot = state.inner.lock().await;
     let active = slot
         .as_mut()
         .ok_or_else(|| "no hay streaming activo".to_string())?;
-    let v = volume.clamp(0.0, 1.0);
+    if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+        return Err("invalid_volume".into());
+    }
+    let v = volume;
     let mut errors = Vec::new();
     for output in active.outputs.values_mut() {
         let mut conn = output.connection.lock().await;
-        match conn.set_volume(v).await {
-            Ok(()) => output.volume = v,
-            Err(error) => errors.push(format!("{}: {error}", output.name)),
+        match tokio::time::timeout(Duration::from_secs(3), conn.set_volume(v)).await {
+            Ok(Ok(())) => {
+                output.volume = v;
+                let receiver_id = {
+                    let discovery = app.state::<DiscoveryState>();
+                    let cache = discovery.cache.lock().unwrap();
+                    cache
+                        .values()
+                        .find(|d| {
+                            d.port == output.port
+                                && d.addresses.iter().any(|a| a.to_string() == output.ip)
+                        })
+                        .map(|d| d.receiver_id())
+                        .unwrap_or_else(|| format!("manual://{}:{}", output.ip, output.port))
+                };
+                if let Err(error) = patch_receiver_preferences(
+                    app.clone(),
+                    receiver_id,
+                    ReceiverPreferencesPatch {
+                        volume: Some(v),
+                        latency_ms: None,
+                        reconnect: None,
+                    },
+                ) {
+                    errors.push(error);
+                }
+            }
+            Ok(Err(error)) => errors.push(format!("{}: {error}", output.name)),
+            Err(_) => errors.push(format!("{}: volume_timeout", output.name)),
         }
     }
     if errors.is_empty() {
@@ -795,6 +1253,8 @@ struct ConnectionInfo {
 /// mantiene la sesión RTSP abierta hasta que se llame a `disconnect_device`.
 #[tauri::command]
 async fn connect_device(
+    app: tauri::AppHandle,
+    device_id: Option<String>,
     ip: String,
     port: Option<u16>,
     name: Option<String>,
@@ -804,21 +1264,19 @@ async fn connect_device(
     let port = port.unwrap_or(7000);
     let display_name = name.clone().unwrap_or_else(|| format!("HomePod {parsed}"));
 
-    let descriptor = DeviceDescriptor {
-        ip: parsed,
-        port,
-        name: display_name.clone(),
-        mac: None,
-        model: None,
-        features: None,
-    };
-
+    let descriptor = resolve_descriptor(&app, device_id.as_deref(), parsed, port, &display_name)?;
     // Keep the previous pairing until the new target succeeds.
+    let mut token = state.control.begin();
     let mut slot = state.inner.lock().await;
-    let session = pair_homepod(descriptor)
-        .await
-        .map_err(|e| format!("pairing falló: {e}"))?;
-    *slot = Some(session);
+    let session = tokio::select! {
+        biased;
+        _ = token.cancelled() => return Err("session_cancelled".into()),
+        result = pair_homepod(descriptor) => result.map_err(|e| format!("pairing falló: {e}"))?,
+    };
+    if let Some(mut previous) = slot.replace(session) {
+        let _ =
+            tokio::time::timeout(Duration::from_secs(3), previous.connection.disconnect()).await;
+    }
 
     Ok(ConnectionInfo {
         ip: parsed.to_string(),
@@ -830,8 +1288,11 @@ async fn connect_device(
 /// Suelta la sesión RTSP actual (si hay).
 #[tauri::command]
 async fn disconnect_device(state: State<'_, ConnectionState>) -> Result<(), String> {
+    state.control.cancel();
     let mut slot = state.inner.lock().await;
-    *slot = None;
+    if let Some(mut session) = slot.take() {
+        let _ = tokio::time::timeout(Duration::from_secs(3), session.connection.disconnect()).await;
+    }
     Ok(())
 }
 
@@ -860,12 +1321,7 @@ async fn add_manual_device(
         .map_err(|e| format!("no parece un AirPlay en {parsed}:{port} — {e}"))?;
 
     let mut device = manual_device(parsed, Some(port), name);
-    if let Some(server) = probe.server_header.as_deref() {
-        device.features = Some(server.to_string());
-        if server.to_lowercase().contains("airtunes") {
-            device.supports_airplay2 = true;
-        }
-    }
+    device.server_header = probe.server_header;
 
     if let Ok(mut cache) = state.cache.lock() {
         cache.insert(device.id.clone(), device.clone());
@@ -875,6 +1331,111 @@ async fn add_manual_device(
         .map_err(|e| e.to_string())?;
 
     Ok(device)
+}
+
+#[tauri::command]
+async fn list_audio_outputs() -> Result<Vec<audio_capture::AudioEndpoint>, String> {
+    tokio::task::spawn_blocking(audio_capture::list_audio_outputs)
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn get_audio_options(app: tauri::AppHandle) -> Result<AudioOptions, String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    store
+        .get("audio_options")
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|e| e.to_string())
+        .map(|v| v.unwrap_or_default())
+}
+#[tauri::command]
+async fn save_audio_options(
+    app: tauri::AppHandle,
+    options: AudioOptions,
+    state: State<'_, StreamingState>,
+) -> Result<(), String> {
+    let _operation = state.operation.lock().await;
+    if state.inner.lock().await.is_some() {
+        return Err("stop_before_source_change".into());
+    }
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(
+        "audio_options",
+        serde_json::to_value(options).map_err(|e| e.to_string())?,
+    );
+    store.save().map_err(|e| e.to_string())
+}
+#[tauri::command]
+async fn get_session_status(state: State<'_, StreamingState>) -> Result<serde_json::Value, String> {
+    let stream = state.inner.lock().await;
+    Ok(match stream.as_ref() {
+        Some(active) => {
+            serde_json::json!({ "generation": active.generation.load(std::sync::atomic::Ordering::SeqCst), "status": "streaming", "mute_status": active._capture.as_ref().map_or("off", |c| c.mute_status()), "group_mode": active.group_mode })
+        }
+        None => {
+            let phase = state.phase.lock().unwrap();
+            let status = if phase.1.is_empty() {
+                "disconnected"
+            } else {
+                phase.1
+            };
+            serde_json::json!({ "generation": state.control.current(), "status": status, "mute_status": "off" })
+        }
+    })
+}
+#[tauri::command]
+fn get_receiver_preferences(
+    app: tauri::AppHandle,
+    receiver_id: String,
+) -> Result<ReceiverPreferences, String> {
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    if let Some(value) = store.get(format!("receiver:{receiver_id}")) {
+        return serde_json::from_value(value).map_err(|e| e.to_string());
+    }
+    // Lazy migration: retain the user's existing global settings for first use.
+    Ok(ReceiverPreferences {
+        volume: get_volume(app.clone())?.unwrap_or(0.2),
+        latency_ms: get_latency(app)?.unwrap_or(3000),
+        reconnect: false,
+    })
+}
+#[tauri::command]
+fn save_receiver_preferences(
+    app: tauri::AppHandle,
+    receiver_id: String,
+    preferences: ReceiverPreferences,
+) -> Result<(), String> {
+    preferences.validate()?;
+    if receiver_id.len() > 512 {
+        return Err("invalid_receiver_id".into());
+    }
+    let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    store.set(
+        format!("receiver:{receiver_id}"),
+        serde_json::to_value(preferences).map_err(|e| e.to_string())?,
+    );
+    store.save().map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn patch_receiver_preferences(
+    app: tauri::AppHandle,
+    receiver_id: String,
+    patch: ReceiverPreferencesPatch,
+) -> Result<(), String> {
+    let _guard = RECEIVER_SETTINGS_LOCK.lock().map_err(|e| e.to_string())?;
+    let mut preferences = get_receiver_preferences(app.clone(), receiver_id.clone())?;
+    patch.apply(&mut preferences);
+    save_receiver_preferences(app, receiver_id, preferences)
+}
+
+#[tauri::command]
+fn open_latest_release(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+    app.shell()
+        .open("https://github.com/Pabldi08/AirSend/releases/latest", None)
+        .map_err(|e| e.to_string())
 }
 
 // ── Persistencia (C1) ────────────────────────────────────────────────────────
@@ -1033,22 +1594,37 @@ async fn confirm_latency(
     state: State<'_, StreamingState>,
 ) -> Result<bool, String> {
     cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
+    let mut token = state.control.begin();
+    let generation = token.generation;
+    let _operation = state.operation.lock().await;
+    if generation != state.control.current() {
+        return Err("session_cancelled".into());
+    }
     let mut changed = state.last_latency_change.lock().await;
     let remaining = latency_cooldown_remaining(*changed, Instant::now());
     if !remaining.is_zero() {
+        monitor_active(&app, &state, generation).await;
         return Err(format!("latency_cooldown:{}", remaining.as_millis()));
     }
 
-    let previous = get_latency(app.clone())?.unwrap_or(cap_core::streaming::DEFAULT_LATENCY_MS);
+    let previous = state
+        .inner
+        .lock()
+        .await
+        .as_ref()
+        .map(|s| s.latency_ms)
+        .unwrap_or(get_latency(app.clone())?.unwrap_or(cap_core::streaming::DEFAULT_LATENCY_MS));
     if previous == latency_ms {
+        monitor_active(&app, &state, generation).await;
         return Ok(false);
     }
 
     let mut slot = state.inner.lock().await;
     let restarted = if let Some(mut stream) = slot.take() {
         let targets = stream
-            .outputs
-            .values()
+            .target_order
+            .iter()
+            .filter_map(|key| stream.outputs.get(key))
             .map(|output| {
                 (
                     output.ip.clone(),
@@ -1059,6 +1635,7 @@ async fn confirm_latency(
             })
             .collect::<Vec<_>>();
         let old_latency_ms = stream.latency_ms;
+        let group_mode = stream.group_mode;
         if let Err(error) = save_latency(&app, latency_ms) {
             *slot = Some(stream);
             return Err(error);
@@ -1068,13 +1645,26 @@ async fn confirm_latency(
         stream.shutdown();
         stream.stop_outputs().await;
         drop(stream);
-        match prepare_stream(app.clone(), &targets, latency_ms).await {
+        match tokio::select! { biased; _ = token.cancelled() => Err("session_cancelled".into()), result = prepare_targets(app.clone(), &targets, latency_ms, generation, group_mode) => result }
+        {
             Ok(replacement) => *slot = Some(replacement),
             Err(error) => {
                 let _ = save_latency(&app, previous);
-                if let Ok(restored) = prepare_stream(app, &targets, old_latency_ms).await {
+                if token.generation != state.control.current() {
+                    return Err(error);
+                }
+                let restored = tokio::select! { biased; _ = token.cancelled() => return Err("session_cancelled".into()), result = prepare_targets(
+                    app.clone(),
+                    &targets,
+                    old_latency_ms,
+                    generation,
+                    group_mode,
+                ) => result };
+                if let Ok(restored) = restored {
                     *slot = Some(restored);
                 }
+                drop(slot);
+                monitor_active(&app, &state, generation).await;
                 return Err(error);
             }
         }
@@ -1084,6 +1674,8 @@ async fn confirm_latency(
         false
     };
 
+    drop(slot);
+    monitor_active(&app, &state, generation).await;
     *changed = Some(Instant::now());
     Ok(restarted)
 }
@@ -1129,7 +1721,14 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<TrayItems> {
         .menu(&menu)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => toggle_main_window(app),
-            "quit" => app.exit(0),
+            "quit" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = stop_streaming(app.clone(), app.state::<StreamingState>()).await;
+                    let _ = disconnect_device(app.state::<ConnectionState>()).await;
+                    app.exit(0);
+                });
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -1250,40 +1849,11 @@ fn init_tracing() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     guard
 }
 
-/// Sube la clase de prioridad del proceso a HIGH_PRIORITY_CLASS en Windows.
-/// Combinado con MMCSS "Pro Audio" en el sender thread (fork airplay2-rs),
-/// elimina los tics audibles cada 20-30 s que ocurren porque el scheduler
-/// fairness de Windows degrada threads de proceso NORMAL bajo carga.
-#[cfg(windows)]
-fn raise_process_priority() {
-    use std::ffi::c_void;
-
-    type Handle = *mut c_void;
-    const HIGH_PRIORITY_CLASS: u32 = 0x0000_0080;
-
-    extern "system" {
-        fn GetCurrentProcess() -> Handle;
-        fn SetPriorityClass(process: Handle, class: u32) -> i32;
-    }
-
-    unsafe {
-        if SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS) != 0 {
-            tracing::info!("Windows: process priority elevated to HIGH_PRIORITY_CLASS");
-        } else {
-            tracing::warn!("Windows: SetPriorityClass(HIGH) failed");
-        }
-    }
-}
-
-#[cfg(not(windows))]
-fn raise_process_priority() {}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // `_log_guard` debe vivir todo el programa para que el writer non-blocking
     // siga drenando logs al archivo. Lo "olvidamos" con un binding mut a static.
     let _log_guard = init_tracing();
-    raise_process_priority();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -1301,6 +1871,9 @@ pub fn run() {
             disconnect_device,
             is_connected,
             start_streaming,
+            start_group_streaming,
+            get_receiver_volumes,
+            set_receiver_volume,
             add_streaming,
             remove_streaming,
             stop_streaming,
@@ -1321,8 +1894,22 @@ pub fn run() {
             get_experimental_local_buffer,
             save_experimental_local_buffer,
             export_audio_diagnostics,
+            list_audio_outputs,
+            get_audio_options,
+            save_audio_options,
+            get_session_status,
+            get_receiver_preferences,
+            save_receiver_preferences,
+            patch_receiver_preferences,
+            open_latest_release,
         ])
         .setup(|app| {
+            let journal = app.path().app_data_dir()?.join("local-mute-recovery.json");
+            // Recovery runs before the window can start another mute session.
+            match std::thread::spawn(move || audio_capture::recover_local_mute(&journal)).join() {
+                Ok(Ok(())) => {}
+                result => tracing::warn!(?result, "local mute recovery remains pending"),
+            }
             let tray_items = setup_tray(app.handle())?;
             app.manage(tray_items);
 
@@ -1348,4 +1935,273 @@ pub fn run() {
 
     // `_log_guard` se dropea aquí al salir, drenando los últimos logs.
     drop(_log_guard);
+}
+
+fn emit_session(app: &tauri::AppHandle, generation: u64, code: &'static str) {
+    let state = app.state::<StreamingState>();
+    let mut phase = state.phase.lock().unwrap();
+    if generation < phase.0 {
+        return;
+    }
+    *phase = (generation, code);
+    let _ = app.emit(
+        "airplay://session",
+        SessionEvent {
+            generation,
+            code: code.into(),
+        },
+    );
+}
+
+async fn monitor_active(app: &tauri::AppHandle, state: &StreamingState, generation: u64) {
+    let slot = state.inner.lock().await;
+    if state.control.current() != generation {
+        return;
+    }
+    if let Some(active) = slot.as_ref() {
+        active
+            .generation
+            .store(generation, std::sync::atomic::Ordering::SeqCst);
+        if active
+            ._capture
+            .as_ref()
+            .is_some_and(|c| c.mute_status() == "off")
+        {
+            if let Err(error) = active.apply_mute(app) {
+                tracing::warn!(%error, "local mute unavailable");
+            }
+        }
+        start_session_monitor(app.clone(), generation);
+        emit_session(app, generation, "streaming");
+    } else {
+        emit_session(app, generation, "disconnected");
+    }
+}
+
+fn start_session_monitor(app: tauri::AppHandle, generation: u64) {
+    tauri::async_runtime::spawn(async move {
+        let mut last_send_errors = 0;
+        let mut failed_sends = 0;
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let state = app.state::<StreamingState>();
+            let reason = {
+                let slot = state.inner.lock().await;
+                let Some(active) = slot.as_ref().filter(|s| {
+                    s.generation.load(std::sync::atomic::Ordering::SeqCst) == generation
+                }) else {
+                    return;
+                };
+                let sends = active.diagnostics.lock().unwrap().send_errors();
+                if sends > last_send_errors {
+                    failed_sends += 1;
+                } else {
+                    failed_sends = 0;
+                }
+                last_send_errors = sends;
+                if active.stop.load(std::sync::atomic::Ordering::SeqCst) {
+                    Some("capture_interrupted")
+                } else if active.outputs.values().any(|o| o.metrics.unhealthy()) {
+                    Some("feedback_failed")
+                } else if failed_sends >= 3 {
+                    Some("transport_failed")
+                } else {
+                    None
+                }
+            };
+            let Some(reason) = reason else {
+                continue;
+            };
+            let mut failed = {
+                let mut slot = state.inner.lock().await;
+                if slot.as_ref().is_none_or(|s| {
+                    s.generation.load(std::sync::atomic::Ordering::SeqCst) != generation
+                }) {
+                    return;
+                }
+                slot.take().unwrap()
+            };
+            let targets = failed
+                .target_order
+                .iter()
+                .filter_map(|key| failed.outputs.get(key))
+                .map(|o| (o.ip.clone(), o.port, o.name.clone(), o.volume))
+                .collect::<Vec<_>>();
+            let latency_ms = failed.latency_ms;
+            let group_mode = failed.group_mode;
+            failed.diagnostics.lock().unwrap().record_failure(reason);
+            failed.shutdown();
+            failed.stop_outputs().await;
+            drop(failed);
+            // A user-requested replacement/Stop always takes priority over automatic recovery.
+            if state.control.current() != generation {
+                return;
+            }
+            let reconnect = targets.iter().any(|(ip, port, _, _)| {
+                let discovery = app.state::<DiscoveryState>();
+                let cache = discovery.cache.lock().unwrap();
+                let id = cache
+                    .values()
+                    .find(|d| d.port == *port && d.addresses.iter().any(|a| a.to_string() == *ip))
+                    .map(|d| d.receiver_id())
+                    .unwrap_or_else(|| format!("manual://{ip}:{port}"));
+                let pair_reconnect = group_mode
+                    && cache
+                        .values()
+                        .find(|d| {
+                            d.port == *port && d.addresses.iter().any(|a| a.to_string() == *ip)
+                        })
+                        .and_then(|d| d.tight_sync_id.as_ref())
+                        .is_some_and(|id| {
+                            get_receiver_preferences(app.clone(), format!("stereo:{id}"))
+                                .is_ok_and(|p| p.reconnect)
+                        });
+                pair_reconnect
+                    || get_receiver_preferences(app.clone(), id).is_ok_and(|p| p.reconnect)
+            });
+            if reconnect {
+                let mut token = state.control.subscribe(generation);
+                emit_session(&app, generation, "recovering");
+                for delay in [1, 2, 4] {
+                    let restored = tokio::select! {
+                        biased;
+                        _ = token.cancelled() => return,
+                        result = async {
+                            tokio::time::sleep(Duration::from_secs(delay)).await;
+                            prepare_targets(app.clone(), &targets, latency_ms, generation, group_mode).await
+                        } => result,
+                    };
+                    match restored {
+                        Ok(mut stream) => {
+                            let mut slot = state.inner.lock().await;
+                            if state.control.current() != generation {
+                                stream.shutdown();
+                                return;
+                            }
+                            let _ = stream.apply_mute(&app);
+                            *slot = Some(stream);
+                            emit_session(&app, generation, "streaming");
+                            last_send_errors = 0;
+                            failed_sends = 0;
+                            break;
+                        }
+                        Err(error) => {
+                            // Authentication/configuration failures require user action.
+                            if !session::recoverable_failure(&error) {
+                                break;
+                            }
+                        }
+                    }
+                }
+                if state.inner.lock().await.is_some() {
+                    continue;
+                }
+            }
+            let _ = app.emit(
+                "airplay://error",
+                SessionEvent {
+                    generation,
+                    code: reason.into(),
+                },
+            );
+            return;
+        }
+    });
+}
+
+#[derive(serde::Serialize)]
+struct ReceiverVolume {
+    ip: String,
+    port: u16,
+    volume: f32,
+    readable: bool,
+}
+#[tauri::command]
+async fn get_receiver_volumes(
+    state: State<'_, StreamingState>,
+) -> Result<Vec<ReceiverVolume>, String> {
+    let mut slot = state.inner.lock().await;
+    let Some(active) = slot.as_mut() else {
+        return Ok(Vec::new());
+    };
+    let mut values = Vec::new();
+    for output in active.outputs.values_mut() {
+        let Ok(mut connection) = output.connection.try_lock() else {
+            values.push(ReceiverVolume {
+                ip: output.ip.clone(),
+                port: output.port,
+                volume: output.volume,
+                readable: output.volume_read_supported.unwrap_or(false),
+            });
+            continue;
+        };
+        let volume = if output.volume_read_supported == Some(false) {
+            None
+        } else {
+            match tokio::time::timeout(Duration::from_secs(2), connection.read_volume()).await {
+                Ok(Ok(Some(v))) => {
+                    output.volume_read_supported = Some(true);
+                    Some(v)
+                }
+                _ => {
+                    output.volume_read_supported = Some(false);
+                    None
+                }
+            }
+        };
+        if let Some(volume) = volume {
+            output.volume = volume;
+        }
+        values.push(ReceiverVolume {
+            ip: output.ip.clone(),
+            port: output.port,
+            volume: output.volume,
+            readable: volume.is_some(),
+        });
+    }
+    Ok(values)
+}
+#[tauri::command]
+async fn set_receiver_volume(
+    app: tauri::AppHandle,
+    ip: String,
+    port: u16,
+    volume: f32,
+    state: State<'_, StreamingState>,
+) -> Result<f32, String> {
+    if !volume.is_finite() || !(0.0..=1.0).contains(&volume) {
+        return Err("invalid_volume".into());
+    }
+    let mut slot = state.inner.lock().await;
+    let output = slot
+        .as_mut()
+        .and_then(|s| s.outputs.get_mut(&output_key(&ip, port)))
+        .ok_or("receiver_not_streaming")?;
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        output.connection.lock().await.set_volume(volume),
+    )
+    .await
+    .map_err(|_| "volume_timeout")?
+    .map_err(|e| e.to_string())?;
+    output.volume = volume;
+    let receiver_id = {
+        let discovery = app.state::<DiscoveryState>();
+        let cache = discovery.cache.lock().unwrap();
+        cache
+            .values()
+            .find(|d| d.port == port && d.addresses.iter().any(|a| a.to_string() == ip))
+            .map(|d| d.receiver_id())
+            .unwrap_or_else(|| format!("manual://{ip}:{port}"))
+    };
+    patch_receiver_preferences(
+        app,
+        receiver_id,
+        ReceiverPreferencesPatch {
+            volume: Some(volume),
+            latency_ms: None,
+            reconnect: None,
+        },
+    )?;
+    Ok(volume)
 }

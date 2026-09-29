@@ -1,6 +1,8 @@
 # AirSend: análisis de AirFlash y plan de mejoras
 
-Fecha: 28 de septiembre de 2026. Estado: plan; implementación de las fases 0 y 1 preparada en `codex/airflash-improvements`, pendiente de comparación en hardware. La guía de pruebas está en `docs/phase-01-testing.md`.
+Análisis original: 28 de septiembre de 2026. Actualización: 29 de septiembre de 2026. La integración de las fases 0–6 y de la corrección de CPU está preparada en `codex/airflash-improvements`. Las funciones nuevas de búfer reducido, silencio local y grupos siguen optativas. La cobertura implementada y las comprobaciones pendientes están en [integration-testing.md](integration-testing.md); la comparación de latencia conserva [phase-01-testing.md](phase-01-testing.md).
+
+La tabla y los hallazgos siguientes describen la referencia de 0.1.7 anterior a esta integración. Implementación y aceptación en hardware son estados distintos: todavía no se ha certificado Denon, silencio Windows ni parejas HomePod reales.
 
 ## Alcance y conclusión
 
@@ -55,7 +57,7 @@ Enviar las mismas muestras a dos sesiones independientes no asegura que se repro
 
 ## Plan de implementación, en orden
 
-Cada fase tiene un resultado comprobable. La siguiente comienza cuando se ha validado la anterior sobre la ruta de un HomePod que ya funciona. Complejidad relativa: baja, media o alta; los plazos dependen especialmente de disponer de testers y hardware.
+Cada fase tiene un resultado comprobable. El plan original proponía validar cada fase antes de la siguiente; por petición del usuario se integra el conjunto en una misma rama, con la aceptación en dispositivos todavía pendiente. Complejidad relativa: baja, media o alta; los plazos dependen especialmente de disponer de testers y hardware.
 
 ### Fase 0 — Medir y fijar la referencia
 
@@ -168,10 +170,10 @@ No hace falta añadir un resampler nuevo solo para convertir 48 a 44,1 kHz: AirS
 
 ## Organización del trabajo y cierre de issues
 
-- Trabajar con `main` y una única rama activa `codex/airflash-improvements`. Presentar cada fase en una PR acotada, fusionarla tras la validación y eliminar las ramas ya fusionadas antes de la siguiente fase.
+- Trabajar con `main` y una única rama activa `codex/airflash-improvements`. Reunir la implementación del plan completo en la PR #21, por petición del usuario. Conservar las comprobaciones de cada fase y la validación de hardware antes de promocionar las funciones experimentales.
 - Los cambios necesarios en `airplay2-rs` se revisan en su repositorio y se fijan por commit en AirSend. Los PRs del fork y de AirSend deben explicar su dependencia.
 - Mantener las funciones experimentales optativas y la ruta de un HomePod conocida durante las pruebas. Preparar builds de prueba antes de promocionarlas a una release estable.
 - Mantener #13 abierta hasta la confirmación del usuario Denon; #20 hasta probar dos HomePods; #2 y #14 hasta comprobar reproducción múltiple y estéreo según su alcance. Ninguna se cierra por la mera presencia de código.
 - Implementar las ideas en el código existente. Si se reutiliza código concreto de AirFlash, conservar atribución y los avisos de su licencia GPLv3+; AirSend declara `GPL-3.0-or-later`. [Licencia de AirFlash](https://github.com/Ding-Kyoma/AirFlash/blob/c046a7d43f5be4306ded1e38cd906c9b6438c4a5/LICENSE).
 
-**Primer trabajo recomendado:** fase 0 y, con sus resultados, fase 1. El hallazgo de buffers y orden de arranque es concreto, afecta al uso diario y puede comprobarse con el HomePod disponible. Después, capacidades reales y #12. La reproducción múltiple queda al final, como se había acordado.
+**Siguiente comprobación:** instalar el artefacto Windows de la integración y seguir `integration-testing.md`. La corrección NTP está incorporada mediante la PR #3 del fork y cubierta por regresiones. La mejora de CPU en la máquina del usuario y los escenarios de hardware no se dan por certificados por la presencia de código.

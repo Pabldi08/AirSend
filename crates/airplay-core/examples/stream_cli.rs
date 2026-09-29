@@ -42,6 +42,7 @@ async fn main() {
         mac: None,
         model: None,
         features: None,
+        advertised: None,
     };
     let handle = match open_live_stream(desc, None, None).await {
         Ok(h) => h,

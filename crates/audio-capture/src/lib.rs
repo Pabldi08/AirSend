@@ -74,6 +74,12 @@ pub trait Capture: Send + Sync {
     fn name(&self) -> &str;
     /// Cierra la captura explícitamente. El Drop también la cierra.
     fn stop(self: Box<Self>);
+    fn request_local_mute(&self, _journal: std::path::PathBuf) -> Result<(), CaptureError> {
+        Err(CaptureError::UnsupportedPlatform)
+    }
+    fn mute_status(&self) -> &'static str {
+        "unavailable"
+    }
 }
 
 impl fmt::Debug for dyn Capture {
@@ -82,6 +88,8 @@ impl fmt::Debug for dyn Capture {
     }
 }
 
+#[cfg(windows)]
+mod endpoints;
 #[cfg(unix)]
 pub mod linux;
 #[cfg(unix)]
@@ -125,5 +133,51 @@ pub fn start_loopback_with_policy(
     {
         let _ = (fmt, policy);
         Err(CaptureError::UnsupportedPlatform)
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AudioEndpoint {
+    pub id: String,
+    pub name: String,
+    pub is_default: bool,
+}
+
+pub fn list_audio_outputs() -> Result<Vec<AudioEndpoint>, CaptureError> {
+    #[cfg(windows)]
+    {
+        endpoints::enumerate()
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(Vec::new())
+    }
+}
+pub fn recover_local_mute(journal: &std::path::Path) -> Result<(), CaptureError> {
+    #[cfg(windows)]
+    {
+        endpoints::recover(journal)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = journal;
+        Ok(())
+    }
+}
+pub fn start_loopback_with_device(
+    fmt: CaptureFormat,
+    policy: CapturePolicy,
+    device_id: Option<String>,
+) -> Result<(Box<dyn Capture>, CaptureReceiver), CaptureError> {
+    #[cfg(windows)]
+    {
+        windows::start_with_device(fmt, policy, device_id)
+    }
+    #[cfg(not(windows))]
+    {
+        if device_id.is_some() {
+            return Err(CaptureError::UnsupportedPlatform);
+        }
+        start_loopback_with_policy(fmt, policy)
     }
 }

@@ -47,3 +47,34 @@ test("a third-party receiver uses its RAOP route and AirPlay label", () => {
   assert.equal(shown.port, 7001);
   assert.deepEqual(routesFor(discovered, shown).map((item) => item.port), [7001, 7000]);
 });
+
+test("configured stereo pairs use two hardware identities and preserve their leader", () => {
+  const left = { ...device("left._airplay._tcp.local.", "aabbccddeeff", "Left", 7000, "homepod"), tight_sync_id: "pair-1", group_name: "Living room", is_group_leader: true };
+  const leftRaop = { ...left, id: "AABBCCDDEEFF@Left._raop._tcp.local.", port: 7001 };
+  const right = { ...device("right._airplay._tcp.local.", "112233445566", "Right", 7000, "homepod"), tight_sync_id: "pair-1" };
+  const discovered = new Map([right, leftRaop, left].map(d => [d.id, d]));
+  assert.equal(groupDevices(discovered).size, 2);
+  const pairs = groupDevices(discovered, true);
+  assert.equal(pairs.size, 1);
+  assert.deepEqual(pairs.get("stereo:pair-1").member_ids, [left.id, right.id]);
+  assert.equal(pairs.get("stereo:pair-1").name, "Living room");
+  assert.equal(pairs.get("stereo:pair-1").pair_complete, true);
+});
+
+test("one physical member plus its RAOP advertisement cannot form a complete pair", () => {
+  const left = { ...device("left._airplay._tcp.local.", "aabbccddeeff", "Left", 7000, "homepod"), tight_sync_id: "pair-1" };
+  const raop = { ...left, id: "AABBCCDDEEFF@Left._raop._tcp.local.", port: 7001 };
+  const discovered = new Map([left, raop].map(d => [d.id, d]));
+  assert.equal(groupDevices(discovered, true).get("stereo:pair-1").pair_complete, false);
+});
+
+test("a room group alone does not imply a stereo pair, and unavailable routes come last", () => {
+  const first = { ...device("first._airplay._tcp.local.", "aabbccddeeff", "First", 7000, "homepod"), group_id: "room", available: false };
+  const second = { ...device("second._airplay._tcp.local.", "112233445566", "Second", 7000, "homepod"), group_id: "room" };
+  const raop = { ...first, id: "AABBCCDDEEFF@First._raop._tcp.local.", port: 7001, available: true };
+  const discovered = new Map([first, raop, second].map(d => [d.id, d]));
+  const known = groupDevices(discovered, true);
+  assert.equal(known.size, 2);
+  assert.equal(known.get("hardware:aabbccddeeff").available, true);
+  assert.deepEqual(routesFor(discovered, known.get("hardware:aabbccddeeff")).map(d => d.port), [7001, 7000]);
+});

@@ -42,10 +42,19 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           args: --bundles nsis -- --locked
+      - name: Hash test installer
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem target/release/bundle/nsis/*.exe)
+          if ($installers.Count -eq 0) { throw "NSIS installer missing" }
+          $lines = $installers | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name }
+          $lines | Set-Content target/release/bundle/nsis/SHA256SUMS -Encoding ascii
       - name: Upload test installer
         uses: actions/upload-artifact@v4
         with:
           name: AirSend-Windows-test-${{ github.sha }}
-          path: target/release/bundle/nsis/*.exe
+          path: |
+            target/release/bundle/nsis/*.exe
+            target/release/bundle/nsis/SHA256SUMS
           if-no-files-found: error
           retention-days: 14

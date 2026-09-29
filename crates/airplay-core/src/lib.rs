@@ -11,3 +11,5 @@ pub use probe::{
 pub use streaming::{open_live_stream, play_test_tone, StreamError, StreamHandle, StreamStage};
 
 pub mod stream_metrics;
+
+pub mod groups;

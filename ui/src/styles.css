@@ -315,3 +315,14 @@ details.manual button {
   from { opacity: 0; transform: translate(-50%, 10px); }
   to { opacity: 1; transform: translate(-50%, 0); }
 }
+
+select { max-width: 100%; min-width: 0; padding: .4rem; border-radius: .35rem; color: inherit; background: var(--bg); border: 1px solid var(--border); }
+.source-label { display: block; margin-bottom: .4rem; }
+.receiver-volume { margin: .6rem 0; }
+.receiver-volume label { display: flex; gap: .5rem; align-items: center; }
+.receiver-volume input { min-width: 0; flex: 1; }
+.receiver-volume small { display: block; opacity: .7; }
+
+details.manual input[type="checkbox"] { flex: none; width: auto; }
+.receiver-volume label { flex-wrap: wrap; }
+.receiver-volume label input { flex-basis: 120px; }
