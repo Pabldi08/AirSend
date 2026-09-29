@@ -9,3 +9,7 @@ pub use probe::{
     parse_manual_endpoint, probe_airplay, ManualEndpointError, ProbeError, ProbeResult,
 };
 pub use streaming::{open_live_stream, play_test_tone, StreamError, StreamHandle, StreamStage};
+
+pub mod stream_metrics;
+
+pub mod groups;

@@ -163,6 +163,14 @@ pub fn manual_device(ip: IpAddr, port: Option<u16>, name: Option<String>) -> Dev
         model: None,
         features: None,
         supports_airplay2: false,
+        available: true,
+        manual: true,
+        server_header: None,
+        group_id: None,
+        tight_sync_id: None,
+        group_name: None,
+        is_group_leader: false,
+        txt: Default::default(),
     }
 }
 

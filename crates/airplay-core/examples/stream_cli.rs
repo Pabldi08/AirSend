@@ -34,17 +34,7 @@ async fn main() {
         .expect("IP inválida");
     let duration_secs: u64 = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(30);
 
-    // 1. Captura del sistema (PipeWire monitor).
-    let (cap, rx) = match start_loopback(CaptureFormat::AIRPLAY_DEFAULT) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("✗ captura: {e}");
-            std::process::exit(1);
-        }
-    };
-    println!("✓ captura: {}", cap.name());
-
-    // 2. Abre stream al HomePod (pair + setup + RTP listo).
+    // 1. Abre stream al HomePod (pair + setup + RTP listo).
     let desc = DeviceDescriptor {
         ip,
         port: 7000,
@@ -52,6 +42,7 @@ async fn main() {
         mac: None,
         model: None,
         features: None,
+        advertised: None,
     };
     let handle = match open_live_stream(desc, None, None).await {
         Ok(h) => h,
@@ -61,6 +52,16 @@ async fn main() {
         }
     };
     println!("✓ stream abierto. Reproduce algo en el PC durante {duration_secs}s.");
+
+    // 2. Captura del sistema, después de completar la conexión (PipeWire monitor).
+    let (cap, rx) = match start_loopback(CaptureFormat::AIRPLAY_DEFAULT) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("✗ captura: {e}");
+            std::process::exit(1);
+        }
+    };
+    println!("✓ captura: {}", cap.name());
 
     // 3. Bombea frames desde la captura al stream.
     let deadline = Instant::now() + Duration::from_secs(duration_secs);

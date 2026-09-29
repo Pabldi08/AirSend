@@ -14,6 +14,8 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      AIRSEND_BUILD_REVISION: ${{ github.sha }}
 
     steps:
       - name: Checkout
@@ -85,6 +87,12 @@ jobs:
       - name: Install UI deps
         run: npm --prefix ui ci
 
+      - name: UI regression tests
+        run: npm --prefix ui run test:devices
+
+      - name: Rust regression tests
+        run: cargo test --workspace --all-targets --locked
+
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0
         env:
@@ -95,5 +103,17 @@ jobs:
           releaseBody: ${{ steps.notes.outputs.notes }}
           releaseDraft: true   # publicamos a mano tras QA
           prerelease: false
-          # NB: dejamos el args vacío → cargo tauri build target msvc por defecto.
-          # Si en el futuro queremos exclusivamente nsis: `args: --bundles nsis`.
+          args: --bundles nsis -- --locked
+
+      - name: Hash installer
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem target/release/bundle/nsis/*.exe)
+          if ($installers.Count -eq 0) { throw "NSIS installer missing" }
+          $lines = $installers | ForEach-Object { "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(), $_.Name }
+          $lines | Set-Content target/release/bundle/nsis/SHA256SUMS -Encoding ascii
+
+      - name: Upload installer checksums to draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload ${{ github.ref_name }} target/release/bundle/nsis/SHA256SUMS --clobber

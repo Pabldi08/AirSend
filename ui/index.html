@@ -24,6 +24,7 @@
       <section>
         <div class="row">
           <button id="scan" data-i18n="scan">Buscar dispositivos</button>
+          <button id="operation-cancel" type="button" hidden data-i18n="cancel">Cancelar</button>
           <span id="status" class="status"></span>
         </div>
         <ul id="devices"></ul>
@@ -34,6 +35,24 @@
           </label>
           <p class="hint" data-i18n="multi_device_hint">Experimental: al conectar otro receptor durante la reproducción, se añadirá al audio actual. Los receptores pueden no estar perfectamente sincronizados.</p>
         </div>
+        <details class="manual">
+          <summary data-i18n="audio_source">Fuente de audio de Windows</summary>
+          <label class="source-label" for="audio-source" data-i18n="audio_source">Fuente de audio de Windows</label>
+          <select id="audio-source"><option value="" data-i18n="audio_default">Salida predeterminada</option></select>
+          <button id="audio-refresh" type="button" data-i18n="refresh">Actualizar</button>
+          <p class="hint" data-i18n="audio_source_hint">Captura las aplicaciones que reproducen en esa salida. No redirige las aplicaciones a otro dispositivo.</p>
+          <label><input id="mute-local" type="checkbox" /><span data-i18n="mute_local">Silenciar salida local (experimental)</span></label>
+          <p class="hint" data-i18n="mute_hint">Se prueba mientras llega audio. Si el silencio corta la captura, se restaura la salida. Se restaura también al parar.</p>
+          <span id="audio-options-status" class="status" role="status"></span>
+        </details>
+        <details class="manual">
+          <summary data-i18n="group_summary">Parejas y sincronización (experimental)</summary>
+          <label><input id="stereo-pairs" type="checkbox" /><span data-i18n="stereo_pairs">Mostrar parejas configuradas en Apple Home</span></label>
+          <p class="hint" data-i18n="group_hint">Selecciona dos HomePods para probar un reloj y envío compartidos. Requiere PTP en la red. Si se pierde un miembro, se para todo el grupo.</p>
+          <div class="row"><select id="group-first" data-i18n-attr="aria-label:group_first"></select><select id="group-second" data-i18n-attr="aria-label:group_second"></select></div>
+          <button id="group-play" type="button" data-i18n="group_play">Probar reproducción sincronizada</button>
+          <span id="group-status" class="status" role="status"></span>
+        </details>
         <div id="player" class="player" hidden>
           <div class="player-row">
             <button id="play-stop" class="play" data-i18n="play_generic">▶ Reproducir audio del PC</button>
@@ -44,6 +63,15 @@
             <input id="volume" type="range" min="0" max="100" value="20" />
             <output id="vol-out">20%</output>
           </label>
+          <div class="multi-control">
+            <label for="experimental-local-buffer">
+              <input id="experimental-local-buffer" type="checkbox" />
+              <span data-i18n="local_buffer">Búfer local reducido (experimental)</span>
+            </label>
+            <p class="hint" data-i18n="local_buffer_hint">Puede reducir el retardo, pero también causar cortes. Para cambiarlo, para la reproducción. El HomePod puede añadir su propio retardo.</p>
+          </div>
+          <label><input id="auto-reconnect" type="checkbox" /><span data-i18n="auto_reconnect">Reconectar si falla este receptor</span></label>
+          <div id="receiver-volumes"></div>
           <div class="latency-control">
             <label class="latency-label" for="latency">
               <span data-i18n="latency">Límite del búfer AirPlay</span>
@@ -63,6 +91,12 @@
             </div>
           </div>
         </div>
+        <details class="manual">
+          <summary data-i18n="diagnostics_summary">Diagnóstico de audio</summary>
+          <p class="hint" data-i18n="diagnostics_hint">Descarga las métricas de las últimas sesiones para comparar retardo y cortes. No incluye nombres, direcciones IP ni credenciales. Las medidas locales no representan el retardo audible del HomePod.</p>
+          <button id="diagnostics-export" type="button" data-i18n="diagnostics_export">Descargar diagnóstico</button>
+          <span id="diagnostics-status" class="status" role="status" aria-live="polite"></span>
+        </details>
         <details class="manual">
           <summary data-i18n="manual_summary">¿No aparece tu HomePod? Añade su IP manualmente</summary>
           <p class="hint" data-i18n="manual_hint">
@@ -84,6 +118,7 @@
           </div>
           <span id="manual-status" class="status"></span>
         </details>
+        <button id="check-updates" type="button" data-i18n="check_updates">Buscar actualizaciones</button>
       </section>
     </main>
     <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">

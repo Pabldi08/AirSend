@@ -16,13 +16,12 @@
 //! El handle (`WindowsCapture`) detiene el hilo al dropearse / `.stop()`.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{bounded, Receiver};
-use wasapi::{get_default_device, initialize_mta, Direction, SampleType, ShareMode, WaveFormat};
+use wasapi::{Direction, SampleType, ShareMode, WaveFormat};
 
 use crate::{Capture, CaptureError, CaptureFormat, CapturedFrame};
 
@@ -102,11 +101,28 @@ pub struct WindowsCapture {
     name: String,
     running: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
+    mute_request: Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
+    mute_state: Arc<AtomicU8>,
 }
 
 impl Capture for WindowsCapture {
     fn name(&self) -> &str {
         &self.name
+    }
+    fn request_local_mute(&self, journal: std::path::PathBuf) -> Result<(), CaptureError> {
+        *self.mute_request.lock().unwrap() = Some(journal);
+        self.mute_state.store(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn mute_status(&self) -> &'static str {
+        match self.mute_state.load(Ordering::SeqCst) {
+            1 => "waiting_signal",
+            2 => "checking",
+            3 => "muted",
+            4 => "unsupported",
+            5 => "user_changed",
+            _ => "off",
+        }
     }
     fn stop(mut self: Box<Self>) {
         self.shutdown();
@@ -130,7 +146,22 @@ impl Drop for WindowsCapture {
 
 pub fn start(
     fmt: CaptureFormat,
-) -> Result<(Box<dyn Capture>, Receiver<CapturedFrame>), CaptureError> {
+) -> Result<(Box<dyn Capture>, crate::CaptureReceiver), CaptureError> {
+    start_with_policy(fmt, crate::CapturePolicy::Stable)
+}
+
+pub fn start_with_policy(
+    fmt: CaptureFormat,
+    policy: crate::CapturePolicy,
+) -> Result<(Box<dyn Capture>, crate::CaptureReceiver), CaptureError> {
+    start_with_device(fmt, policy, None)
+}
+
+pub fn start_with_device(
+    fmt: CaptureFormat,
+    policy: crate::CapturePolicy,
+    device_id: Option<String>,
+) -> Result<(Box<dyn Capture>, crate::CaptureReceiver), CaptureError> {
     if fmt.channels != 2 || fmt.sample_rate == 0 {
         return Err(CaptureError::UnsupportedConfig {
             wanted: fmt.sample_rate,
@@ -141,9 +172,13 @@ pub fn start(
     let target_rate = fmt.sample_rate;
     let target_channels = fmt.channels;
 
-    let (tx, rx) = bounded::<CapturedFrame>(64);
+    let (tx, rx) = crate::queue::capture_channel(policy);
     let running = Arc::new(AtomicBool::new(true));
     let running_thread = running.clone();
+    let mute_request = Arc::new(std::sync::Mutex::new(None));
+    let mute_state = Arc::new(AtomicU8::new(0));
+    let thread_mute_request = mute_request.clone();
+    let thread_mute_state = mute_state.clone();
 
     // Canal síncrono para confirmar (o reportar fallo de) la inicialización
     // antes de devolver. Si WASAPI rechaza el formato, queremos enterarnos en
@@ -153,8 +188,25 @@ pub fn start(
     let handle = thread::Builder::new()
         .name("audio-capture-wasapi".into())
         .spawn(move || {
-            let result =
-                capture_thread_main(running_thread, target_rate, target_channels, &init_tx, tx);
+            let result = (|| {
+                let _com = crate::endpoints::ComGuard::new().map_err(|e| e.to_string())?;
+                loop {
+                    let restart = capture_thread_main(
+                        running_thread.clone(),
+                        target_rate,
+                        target_channels,
+                        &init_tx,
+                        tx.clone(),
+                        device_id.as_deref(),
+                        &thread_mute_request,
+                        &thread_mute_state,
+                    )?;
+                    if !restart || !running_thread.load(Ordering::SeqCst) {
+                        break;
+                    }
+                }
+                Ok::<(), String>(())
+            })();
             if let Err(e) = result {
                 tracing::error!(error = %e, "WASAPI capture thread exit con error");
                 // Si init_tx aún no ha sido consumido, asegurar que se envía el error.
@@ -168,11 +220,21 @@ pub fn start(
     // Esperamos a la inicialización. Si tarda >5 s, asumimos cuelgue.
     let name = match init_rx.recv_timeout(Duration::from_secs(5)) {
         Ok(Ok(name)) => name,
-        Ok(Err(e)) => return Err(CaptureError::Backend(e)),
+        Ok(Err(e)) => {
+            running.store(false, Ordering::SeqCst);
+            let _ = handle.join();
+            return Err(CaptureError::Backend(e));
+        }
         Err(_) => {
+            running.store(false, Ordering::SeqCst);
+            // A driver call cannot be forcibly cancelled; the worker exits as
+            // soon as initialization returns, without starting capture.
+            if handle.is_finished() {
+                let _ = handle.join();
+            }
             return Err(CaptureError::Backend(
                 "WASAPI no completó init en 5 s".into(),
-            ))
+            ));
         }
     };
 
@@ -181,6 +243,8 @@ pub fn start(
             name,
             running,
             handle: Some(handle),
+            mute_request,
+            mute_state,
         }),
         rx,
     ))
@@ -193,18 +257,23 @@ fn capture_thread_main(
     target_rate: u32,
     target_channels: u16,
     init_tx: &std::sync::mpsc::SyncSender<Result<String, String>>,
-    tx: crossbeam_channel::Sender<CapturedFrame>,
-) -> Result<(), String> {
+    tx: crate::CaptureSender,
+    selected_id: Option<&str>,
+    mute_request: &std::sync::Mutex<Option<std::path::PathBuf>>,
+    mute_state: &AtomicU8,
+) -> Result<bool, String> {
     let _mmcss = register_mmcss();
 
-    // COM en MTA (la API recomendada por wasapi-rs para hilos no UI).
-    initialize_mta()
-        .ok()
-        .map_err(|e| format!("initialize_mta: {e}"))?;
-
-    let device = get_default_device(&Direction::Render)
-        .map_err(|e| format!("get_default_device(Render): {e}"))?;
-
+    let notifications = crate::endpoints::Notifications::new().map_err(|e| e.to_string())?;
+    let mut generation = notifications.generation.load(Ordering::Relaxed);
+    let device = crate::endpoints::select(selected_id)?;
+    let endpoint_id = device.get_id().map_err(|e| e.to_string())?;
+    if mute_request.lock().unwrap().is_some() {
+        mute_state.store(1, Ordering::SeqCst);
+    }
+    let mut mute: Option<crate::endpoints::MuteGuard> = None;
+    let mut mute_started: Option<Instant> = None;
+    let mut signal_after_mute = false;
     let device_name = device
         .get_friendlyname()
         .unwrap_or_else(|_| "default render".to_string());
@@ -262,7 +331,7 @@ fn capture_thread_main(
         .map_err(|e| format!("start_stream: {e}"))?;
 
     // Comunicamos al caller que la inicialización fue OK y devolvemos el name.
-    let _ = init_tx.send(Ok(device_name));
+    let _ = init_tx.try_send(Ok(device_name));
 
     // VecDeque<u8> donde wasapi-rs escribe los bytes crudos del capture client.
     // Pre-reservamos espacio para varios chunks para evitar realloc en el path
@@ -289,7 +358,39 @@ fn capture_thread_main(
     let mut last_idle_warn: Option<Instant> = None;
 
     while running.load(Ordering::SeqCst) {
+        let new_generation = notifications.generation.load(Ordering::Relaxed);
+        if new_generation != generation {
+            generation = new_generation;
+            if selected_id.is_none()
+                && crate::endpoints::select(None)?
+                    .get_id()
+                    .map_err(|e| e.to_string())?
+                    != endpoint_id
+            {
+                let _ = audio_client.stop_stream();
+                return Ok(true);
+            }
+            if !matches!(device.get_state(), Ok(wasapi::DeviceState::Active)) {
+                return Err("selected_audio_output_unavailable".into());
+            }
+        }
         let now = Instant::now();
+        if let Some(guard) = &mute {
+            if guard.external_change() {
+                mute_state.store(5, Ordering::SeqCst);
+                mute = None;
+                *mute_request.lock().unwrap() = None;
+            } else if mute_started.is_some_and(|at| at.elapsed() >= Duration::from_millis(800)) {
+                if signal_after_mute {
+                    mute_state.store(3, Ordering::SeqCst);
+                } else {
+                    mute = None;
+                    *mute_request.lock().unwrap() = None;
+                    mute_state.store(4, Ordering::SeqCst);
+                }
+                mute_started = None;
+            }
+        }
         max_event_gap = max_event_gap.max(now.saturating_duration_since(last_iteration));
         last_iteration = now;
 
@@ -312,16 +413,41 @@ fn capture_thread_main(
                 samples.push(i16::from_le_bytes([lo, hi]));
             }
 
+            let pending_frames = byte_queue.len() / bytes_per_frame;
+            let captured_at = Instant::now()
+                - Duration::from_secs_f64(
+                    (pending_frames + CHUNK_FRAMES) as f64 / target_rate as f64,
+                );
+            let signal = samples.iter().any(|s| s.unsigned_abs() > 64);
+            // Ignore audio queued before the endpoint mute took effect.
+            if mute_started.is_some_and(|at| at.elapsed() >= Duration::from_millis(150)) && signal {
+                signal_after_mute = true;
+            }
+            let requested_journal = mute_request.lock().unwrap().clone();
+            if mute.is_none() && signal {
+                if let Some(journal) = requested_journal {
+                    match crate::endpoints::MuteGuard::apply(&endpoint_id, &journal) {
+                        Ok(guard) => {
+                            // Do not count buffered pre-mute samples as proof of live capture.
+                            byte_queue.clear();
+                            mute = Some(guard);
+                            mute_started = Some(Instant::now());
+                            signal_after_mute = false;
+                            mute_state.store(2, Ordering::SeqCst);
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "local mute unavailable");
+                            mute_state.store(4, Ordering::SeqCst);
+                            *mute_request.lock().unwrap() = None;
+                        }
+                    }
+                }
+            }
+            let mut frame = CapturedFrame::new(samples, target_channels, target_rate);
+            frame.captured_at = captured_at;
             // try_send: si el consumidor (pump → ALAC) está saturado,
             // soltamos el chunk para no inflar latencia indefinidamente.
-            if tx
-                .try_send(CapturedFrame {
-                    samples,
-                    channels: target_channels,
-                    sample_rate: target_rate,
-                })
-                .is_err()
-            {
+            if tx.try_send(frame).is_err() {
                 chunks_dropped += 1;
             }
         }
@@ -342,11 +468,11 @@ fn capture_thread_main(
                 // No acumulamos silencio en la cola. Si vuelve el audio real,
                 // como máximo habrá dos paquetes mudos por delante.
                 if tx.len() < 2 {
-                    match tx.try_send(CapturedFrame {
-                        samples: vec![0i16; chunk_samples],
-                        channels: target_channels,
-                        sample_rate: target_rate,
-                    }) {
+                    match tx.try_send(CapturedFrame::new(
+                        vec![0i16; chunk_samples],
+                        target_channels,
+                        target_rate,
+                    )) {
                         Ok(()) => chunks_silence += 1,
                         Err(_) => chunks_dropped += 1,
                     }
@@ -407,5 +533,5 @@ fn capture_thread_main(
     }
 
     let _ = audio_client.stop_stream();
-    Ok(())
+    Ok(false)
 }

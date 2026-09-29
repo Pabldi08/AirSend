@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 ringbuf = { workspace = true }
 crossbeam-channel = "0.5"
@@ -15,6 +17,8 @@ cpal = "0.15"
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.15"
+windows = { version = "0.57", features = ["implement", "Win32_Media_Audio_Endpoints", "Win32_System_Com", "Win32_UI_Shell_PropertiesSystem"] }
+windows-core = "0.57"
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

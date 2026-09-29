@@ -56,6 +56,7 @@ pub struct DeviceDescriptor {
     /// String de features del TXT mDNS (`0x4A7FCA00,0x3C354BD0`).
     /// Si no la tenemos, usamos un set conservador.
     pub features: Option<String>,
+    pub advertised: Option<Ap2Device>,
 }
 
 impl DeviceDescriptor {
@@ -65,6 +66,12 @@ impl DeviceDescriptor {
     }
 
     fn build_ap2_device(&self) -> Result<Ap2Device, PairingError> {
+        if let Some(mut device) = self.advertised.clone() {
+            device.addresses = vec![self.ip];
+            device.port = self.port;
+            device.name = self.name.clone();
+            return Ok(device);
+        }
         // MAC sintética estable a partir de la IP cuando no la tengamos.
         let mac = self.mac.clone().unwrap_or_else(|| match self.ip {
             IpAddr::V4(v4) => {
@@ -81,14 +88,10 @@ impl DeviceDescriptor {
         let features = match &self.features {
             Some(s) => Features::from_txt_value(s)
                 .map_err(|e| PairingError::InvalidFeatures(e.to_string()))?,
-            None => Features::from_txt_value("0x4A7FCA00,0x3C354BD0")
-                .map_err(|e| PairingError::InvalidFeatures(e.to_string()))?,
+            None => Features::default(),
         };
 
-        let model = self
-            .model
-            .clone()
-            .unwrap_or_else(|| "AudioAccessory5,1".to_string());
+        let model = self.model.clone().unwrap_or_default();
 
         Ok(Ap2Device {
             id,

@@ -9,7 +9,7 @@ use std::thread;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Sender};
 
 use crate::{Capture, CaptureError, CaptureFormat, CapturedFrame};
 
@@ -42,8 +42,15 @@ impl Drop for LinuxCapture {
 
 pub fn start(
     fmt: CaptureFormat,
-) -> Result<(Box<dyn Capture>, Receiver<CapturedFrame>), CaptureError> {
-    let (tx, rx) = bounded::<CapturedFrame>(64);
+) -> Result<(Box<dyn Capture>, crate::CaptureReceiver), CaptureError> {
+    start_with_policy(fmt, crate::CapturePolicy::Stable)
+}
+
+pub fn start_with_policy(
+    fmt: CaptureFormat,
+    policy: crate::CapturePolicy,
+) -> Result<(Box<dyn Capture>, crate::CaptureReceiver), CaptureError> {
+    let (tx, rx) = crate::queue::capture_channel(policy);
     let (ready_tx, ready_rx) = bounded::<Result<String, CaptureError>>(1);
     let running = Arc::new(AtomicBool::new(true));
     let running_thread = running.clone();
@@ -67,7 +74,7 @@ pub fn start(
 
 fn run_capture(
     fmt: CaptureFormat,
-    tx: Sender<CapturedFrame>,
+    tx: crate::CaptureSender,
     ready: Sender<Result<String, CaptureError>>,
     running: Arc<AtomicBool>,
 ) {
@@ -211,7 +218,7 @@ fn forward_f32(
     in_rate: u32,
     want_channels: u16,
     want_rate: u32,
-    tx: &Sender<CapturedFrame>,
+    tx: &crate::CaptureSender,
 ) {
     let frames = data.len() / in_channels as usize;
     let mut out: Vec<i16> = Vec::with_capacity(frames * want_channels as usize);
@@ -230,11 +237,7 @@ fn forward_f32(
     } else {
         resample_linear(&out, want_channels as usize, in_rate, want_rate)
     };
-    let _ = tx.try_send(CapturedFrame {
-        samples: resampled,
-        channels: want_channels,
-        sample_rate: want_rate,
-    });
+    let _ = tx.try_send(CapturedFrame::new(resampled, want_channels, want_rate));
 }
 
 fn forward_i16(
@@ -243,7 +246,7 @@ fn forward_i16(
     in_rate: u32,
     want_channels: u16,
     want_rate: u32,
-    tx: &Sender<CapturedFrame>,
+    tx: &crate::CaptureSender,
 ) {
     let frames = data.len() / in_channels as usize;
     let mut out: Vec<i16> = Vec::with_capacity(frames * want_channels as usize);
@@ -261,11 +264,7 @@ fn forward_i16(
     } else {
         resample_linear(&out, want_channels as usize, in_rate, want_rate)
     };
-    let _ = tx.try_send(CapturedFrame {
-        samples: resampled,
-        channels: want_channels,
-        sample_rate: want_rate,
-    });
+    let _ = tx.try_send(CapturedFrame::new(resampled, want_channels, want_rate));
 }
 
 /// Resampling lineal interleaved (rápido y sin deps). Para Hito 3 vale; en
