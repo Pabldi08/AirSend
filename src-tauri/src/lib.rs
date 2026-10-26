@@ -64,6 +64,10 @@ mod latency_tests {
         assert_eq!(decode_latency(&serde_json::json!("video")), Some(2000));
         assert_eq!(decode_latency(&serde_json::json!("gaming")), Some(1000));
         assert_eq!(decode_latency(&serde_json::json!(700)), Some(700));
+        assert_eq!(decode_latency(&serde_json::json!(0)), Some(100));
+        for invalid in [1, 50, 99, 3100, u64::MAX] {
+            assert_eq!(decode_latency(&serde_json::json!(invalid)), None);
+        }
         assert_eq!(decode_latency(&serde_json::json!(750)), None);
     }
 }
@@ -1404,7 +1408,7 @@ fn get_receiver_preferences(
 ) -> Result<ReceiverPreferences, String> {
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
     if let Some(value) = store.get(format!("receiver:{receiver_id}")) {
-        return serde_json::from_value(value).map_err(|e| e.to_string());
+        return ReceiverPreferences::from_stored(value);
     }
     // Lazy migration: retain the user's existing global settings for first use.
     Ok(ReceiverPreferences {
@@ -1582,7 +1586,16 @@ fn decode_latency(value: &serde_json::Value) -> Option<u32> {
         Some(_) => None,
         None => value.as_u64().and_then(|n| u32::try_from(n).ok()),
     };
-    latency_ms.filter(|ms| cap_core::streaming::validate_latency_ms(*ms).is_ok())
+    // Older releases accepted zero, which can leave HomePods silent.
+    latency_ms
+        .map(|ms| {
+            if ms == 0 {
+                cap_core::streaming::MIN_LATENCY_MS
+            } else {
+                ms
+            }
+        })
+        .filter(|ms| cap_core::streaming::validate_latency_ms(*ms).is_ok())
 }
 
 #[tauri::command]

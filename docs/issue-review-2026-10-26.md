@@ -12,7 +12,7 @@ Se consultaron todas las issues y PR abiertas de AirSend. Había 9 issues y ning
 | [#22](https://github.com/Pabldi08/AirSend/issues/22) | La dependencia fijada ya incluye cierre de timing y las sesiones desconectan al parar. Faltan perfiles CPU/hilos tras diez paradas y diez cambios en Windows. |
 | [#23](https://github.com/Pabldi08/AirSend/issues/23) | El código acepta y envía `(0, 0)` como búfer, pese al informe de silencio. Se aborda por separado en `issue/buffer-minimo`: evitar 0 ms y migrar ajustes antiguos a 100 ms, el mínimo confirmado por el informante. Esto no certifica latencia acústica de 100 ms. |
 | [#24](https://github.com/Pabldi08/AirSend/issues/24) | Rama `issue/homepod-os27`: integrar parser de UUID compuestos de airplay2-rs#5 con autoría original, elegir PTP anunciado, corregir offset BMCA y recuperación RTP, mantener errores visibles y recuperar ritmo de silencio con temporizadores Windows gruesos. Falta validar en HomePod OS 27. |
-| [#25](https://github.com/Pabldi08/AirSend/issues/25) | Sin descripción ni pasos: no hay información técnica suficiente para reproducir o corregir nada. |
+| [#25](https://github.com/Pabldi08/AirSend/issues/25) | Sin descripción ni pasos y con título promocional. Eliminada por petición expresa del propietario. |
 
 La PR abierta [airplay2-rs#5](https://github.com/Pabldi08/airplay2-rs/pull/5) se revisó como dependencia de #24. Acepta los dos formatos observados de `gid`/`pgid` (`UUID+UUID` y `UUID+1+UUID`), conserva `tsid` simple y evita descartar el receptor por IDs de grupo ilegibles. No se ha fusionado ni cerrado automáticamente.
 

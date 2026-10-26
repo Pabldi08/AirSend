@@ -60,3 +60,13 @@ La rama `issue/homepod-os27` fija la dependencia que incorpora el parser de UUID
 6. Provocar un fallo de conexión: el texto del error debe seguir visible después de finalizar la operación y de recibir anuncios mDNS; un nuevo intento debe limpiarlo.
 
 Mantener #24 abierta hasta esta validación Windows/HomePod; las pruebas Linux y el chequeo de compilación de captura para Windows no verifican un driver ni un receptor real.
+
+## Búfer mínimo — issue #23
+
+La rama `issue/buffer-minimo` retira la solicitud de 0 ms, que puede dejar el HomePod sin audio. La UI y el backend aceptan 100–3.000 ms en pasos de 100 ms; los ajustes globales y por receptor guardados a 0 se convierten a 100 al leerlos, sin perder volumen ni reconexión. El valor predeterminado sigue siendo 3.000 ms y se conserva el intervalo de 10 segundos entre cambios.
+
+1. Con una instalación previa, guardar 0 ms en los ajustes globales y en un receptor; abrir esta versión y verificar que muestra 100 ms y conserva volumen y reconexión.
+2. Reproducir y confirmar 100, 200, 1.000 y 3.000 ms; confirmar que un comando directo con 0 ms devuelve error antes de preparar la sesión.
+3. Repetir con un HomePod mini y recoger diagnóstico y confirmación audible. Los límites se solicitan al receptor: no prometen esa demora acústica ni prueban que todos los receptores soporten el mismo mínimo.
+
+Este cambio evita la configuración conocida que produce silencio; no implementa reproducción sin búfer ni certifica que valores inferiores a 100 ms sean utilizables. Mantener #23 abierta hasta validar el resultado en hardware.
