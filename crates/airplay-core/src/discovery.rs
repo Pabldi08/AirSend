@@ -391,4 +391,43 @@ mod capability_tests {
         assert!(device.model.is_empty());
         assert_eq!(device.features.0, 0);
     }
+    #[test]
+    fn homepod_os27_compound_groups_preserve_connection_metadata() {
+        let ip = "192.0.2.27".parse().unwrap();
+        for gid in [
+            "11111111-1111-1111-1111-111111111111+22222222-2222-2222-2222-222222222222",
+            "11111111-1111-1111-1111-111111111111+1+22222222-2222-2222-2222-222222222222",
+        ] {
+            let device = Device::from_txt(
+                "HomePod._airplay._tcp.local.".into(),
+                "HomePod".into(),
+                "speaker.local.".into(),
+                vec![ip],
+                7000,
+                HashMap::from([
+                    ("deviceid".into(), "AA:BB:CC:DD:EE:FF".into()),
+                    ("model".into(), "AudioAccessory5,1".into()),
+                    ("osvers".into(), "27.0".into()),
+                    ("gid".into(), gid.into()),
+                    ("pgid".into(), gid.into()),
+                    ("tsid".into(), "33333333-3333-3333-3333-333333333333".into()),
+                ]),
+            );
+            let parsed = device
+                .descriptor(ip, &[device.clone()])
+                .unwrap()
+                .into_ap2_device()
+                .unwrap();
+            assert_eq!(
+                parsed.group_id.unwrap().to_string(),
+                "11111111-1111-1111-1111-111111111111"
+            );
+            assert_eq!(parsed.parent_group_id, parsed.group_id);
+            assert_eq!(
+                parsed.tight_sync_id.unwrap().to_string(),
+                "33333333-3333-3333-3333-333333333333"
+            );
+            assert_eq!(parsed.os_version.as_deref(), Some("27.0"));
+        }
+    }
 }

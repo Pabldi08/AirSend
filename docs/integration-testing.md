@@ -47,3 +47,16 @@ Las pruebas UDP verifican cabeceras RTP idénticas, paquetes cifrados distintos,
 ## Instalador y actualización
 
 Desde el artefacto de la ejecución Windows del PR, verificar el `.exe` con `Get-FileHash -Algorithm SHA256` y compararlo con `SHA256SUMS`. Instalar sobre 0.1.7, comprobar ajustes, identificador, inicio, bandeja y desinstalación. El botón Buscar actualizaciones abre únicamente la release oficial; no instala nada automáticamente. El workflow de release mantiene publicación en borrador y sube los hashes. No promocionar a una release estable hasta comparar las rutas optativas en hardware.
+
+## HomePod OS 27 — issue #24
+
+La rama `issue/homepod-os27` fija la dependencia que incorpora el parser de UUID compuestos (PR airplay2-rs#5, con autoría original), offset PTP y recuperación de RTP tras un hueco de captura. AirSend elige PTP si el receptor lo anuncia; mantiene NTP si no lo anuncia. El silencio local recupera el ritmo tras despertares Windows de aproximadamente 15,6 ms, sin reproducir ráfagas tras bloqueos largos. Los errores de conectar/desconectar permanecen visibles al redibujar la lista.
+
+1. Con HomePod OS 27 inactivo, conectar con `gid=UUID+UUID` y con `gid/pgid=UUID+1+UUID`. Comprobar también que `tsid` simple conserva la pareja.
+2. Iniciar con audio activo y comprobar SETUP, RECORD y sonido; repetir con límites de 100, 300, 1.000 y 3.000 ms.
+3. Activar búfer local reducido, iniciar con el PC en silencio y reproducir después. Mantener silencio diez segundos: el ritmo esperado es aproximadamente 1.253 paquetes por diez segundos a 44,1 kHz/352 frames, sujeto a inicio y planificación.
+4. Pausar varios minutos y reanudar sin parar AirSend. Comprobar que el salto de cronología recupera el sonido y que no se acumula audio antiguo.
+5. El fallback de Sync/Follow_Up estima offset unidireccional con una ventana de 32 muestras; no mide RTT ni demuestra sincronización acústica. Comparar grupo sincronizado, receptores independientes, cambios de destino y puertos PTP ocupados antes de considerar estable el cambio.
+6. Provocar un fallo de conexión: el texto del error debe seguir visible después de finalizar la operación y de recibir anuncios mDNS; un nuevo intento debe limpiarlo.
+
+Mantener #24 abierta hasta esta validación Windows/HomePod; las pruebas Linux y el chequeo de compilación de captura para Windows no verifican un driver ni un receptor real.

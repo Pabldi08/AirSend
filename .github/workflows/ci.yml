@@ -31,7 +31,9 @@ jobs:
       - name: Install UI dependencies
         run: npm --prefix ui ci
       - name: UI regression tests
-        run: npm --prefix ui run test:devices
+        run: |
+          npm --prefix ui run test:devices
+          npm --prefix ui run test:connection
       - name: Build UI
         run: npm --prefix ui run build
       - name: Rust regression tests

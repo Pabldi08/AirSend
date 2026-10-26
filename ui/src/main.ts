@@ -63,6 +63,7 @@ let connectingId: string | null = null;
 let connectedRoute: Device | null = null;
 const activeRoutes = new Map<string, Device>();
 let actionBusy = false;
+let connectionError: string | null = null;
 let activeGeneration = 0;
 let intentSequence = 0;
 let stopping = false;
@@ -144,6 +145,7 @@ async function connect(device: Device) {
   const intent = ++intentSequence;
   actionBusy = true;
   connectingId = device.id;
+  connectionError = null;
   render();
   try {
     if (playing) {
@@ -184,7 +186,8 @@ async function connect(device: Device) {
     connectedId = device.id;
     await loadReceiverPreferences(device.id);
   } catch (err) {
-    statusEl.textContent = t("error_prefix", { err: String(err) });
+    connectionError = t("error_prefix", { err: String(err) });
+    showToast(connectionError);
   } finally {
     actionBusy = false;
     connectingId = null;
@@ -195,6 +198,7 @@ async function connect(device: Device) {
 async function disconnect(device: Device) {
   if (actionBusy || latencyApplying) return;
   actionBusy = true;
+  connectionError = null;
   render();
   try {
     if (playing && synchronizedPlaying) { await stopPlay(); return; }
@@ -223,7 +227,8 @@ async function disconnect(device: Device) {
     connectedId = null;
     connectedRoute = null;
   } catch (err) {
-    statusEl.textContent = t("error_prefix", { err: String(err) });
+    connectionError = t("error_prefix", { err: String(err) });
+    showToast(connectionError);
   } finally {
     actionBusy = false;
     render();
@@ -539,10 +544,9 @@ function render() {
 
     devicesList.appendChild(li);
   }
-  statusEl.textContent =
-    known.size === 1
+  statusEl.textContent = connectionError ?? (known.size === 1
       ? t("devices_count_one")
-      : t("devices_count_other", { n: known.size });
+      : t("devices_count_other", { n: known.size }));
   updatePlayerUi();
   multiToggle.disabled = synchronizedPlaying || actionBusy || latencyApplying;
   refreshLatencyUi();

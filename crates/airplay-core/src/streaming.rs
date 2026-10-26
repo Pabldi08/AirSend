@@ -178,6 +178,16 @@ fn streaming_stream_config(latency_ms: u32) -> Result<StreamConfig, StreamError>
     })
 }
 
+// Use PTP when the receiver advertises it; HomePod OS 27 no longer
+// completes realtime NTP SETUP. Keep NTP for receivers without PTP support.
+fn receiver_timing_protocol(device: &ap2rs_client::Device) -> TimingProtocol {
+    if device.features.supports_ptp() {
+        TimingProtocol::Ptp
+    } else {
+        TimingProtocol::Ntp
+    }
+}
+
 /// Volumen por defecto al abrir el stream. AirPlay usa escala 0..1
 /// (0 = mute, 1 = máximo). 0.20 ≈ -25 dB, suave para no asustar pruebas.
 pub const DEFAULT_INITIAL_VOLUME: f32 = 0.20;
@@ -357,7 +367,8 @@ async fn prepare_live_stream_once(
     let device = build_device(&descriptor)?;
     let advertised_model = device.model.clone();
     let advertised_features = device.features.0;
-    let config = streaming_stream_config(latency_ms.unwrap_or(DEFAULT_LATENCY_MS))?;
+    let mut config = streaming_stream_config(latency_ms.unwrap_or(DEFAULT_LATENCY_MS))?;
+    config.timing_protocol = receiver_timing_protocol(&device);
     let sample_rate = config.audio_format.sample_rate.as_hz();
     let channels = config.audio_format.channels;
     let metrics = Arc::new(StreamMetrics::default());
@@ -526,6 +537,23 @@ pub async fn play_test_tone(
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+
+    #[test]
+    fn uses_advertised_ptp_and_preserves_ntp_for_other_receivers() {
+        let descriptor = DeviceDescriptor {
+            ip: "192.0.2.1".parse().unwrap(),
+            port: 7000,
+            name: "HomePod".into(),
+            mac: None,
+            model: None,
+            features: None,
+            advertised: None,
+        };
+        let mut device = descriptor.into_ap2_device().unwrap();
+        assert_eq!(receiver_timing_protocol(&device), TimingProtocol::Ntp);
+        device.features = ap2rs_core::features::Features(1 << 41);
+        assert_eq!(receiver_timing_protocol(&device), TimingProtocol::Ptp);
+    }
 
     #[test]
     fn latency_slider_bounds_map_to_airplay_frames() {
