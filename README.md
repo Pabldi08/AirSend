@@ -43,7 +43,7 @@ experimental and does not synchronize receiver clocks.
 | Tray + close-to-tray | ✅ | ✅ | ✅ |
 | Auto-reconnect to last device | ✅ | ✅ | ✅ |
 | Manual IP when mDNS fails | ✅ | ❌ | ⚠️ Limited |
-| AirPlay buffer control | 0–3000 ms requested upper bound; receiver may add delay | Variable | High, occasional desync |
+| AirPlay buffer control | 100–3000 ms requested upper bound; receiver may add delay | Variable | High, occasional desync |
 | Windows jitter in release builds | ✅ MMCSS Pro Audio + HIGH_PRIORITY | ❌ | ✅ |
 | Active development | ✅ | ❌, stalled for years | ✅ |
 | Auditable source | ✅ | ❌ | ❌ |
@@ -79,7 +79,7 @@ See [the integration test guide](docs/integration-testing.md) and [the latency c
 - [x] Add device by manual IP (networks with broken mDNS: Movistar HGU routers, VLANs)
 - [x] Auto-reconnect to the last device on startup
 - [x] Persistent volume across sessions
-- [x] Confirmed latency slider (0–3000 ms requested buffer limit), with a 10-second cooldown and saved setting; 0 ms is experimental
+- [x] Confirmed latency slider (100–3000 ms requested buffer limit), with a 10-second cooldown and saved setting; saved 0 ms settings migrate to 100 ms
 - [x] System tray + close-to-tray (app keeps running in the background)
 - [x] Daily-rotated log files + UI toast for async errors
 - [x] Manual releases through GitHub Releases
