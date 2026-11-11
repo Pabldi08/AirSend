@@ -788,6 +788,7 @@ async fn start_group_streaming(
     latency_ms: u32,
     state: State<'_, StreamingState>,
 ) -> Result<Vec<StreamingInfo>, String> {
+    cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
     if device_ids.len() != 2 || device_ids[0] == device_ids[1] {
         return Err("group_requires_two_receivers".into());
     }
@@ -878,6 +879,7 @@ async fn start_streaming(
         .unwrap_or(cap_core::streaming::DEFAULT_INITIAL_VOLUME)
         .clamp(0.0, 1.0);
     let latency_ms = latency_ms.unwrap_or(cap_core::streaming::DEFAULT_LATENCY_MS);
+    cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
     if !volume.is_finite() {
         return Err("invalid_volume".into());
     }
@@ -940,6 +942,9 @@ async fn add_streaming(
     latency_ms: Option<u32>,
     state: State<'_, StreamingState>,
 ) -> Result<StreamingInfo, String> {
+    if let Some(requested) = latency_ms {
+        cap_core::streaming::validate_latency_ms(requested).map_err(|e| e.to_string())?;
+    }
     let parsed: IpAddr = ip.parse().map_err(|e| format!("IP inválida: {e}"))?;
     let port = port.unwrap_or(7000);
     let name = name.unwrap_or_else(|| format!("HomePod {parsed}"));
