@@ -41,6 +41,7 @@ async function previewUrl() {
   await page.screenshot({path:`${out}/after-speakers-light.png`});
   assert.equal(await page.locator('#legacy-timing').count(),0,'Audio compatibility changes belong to the separate draft');
   assert.equal(await page.locator('#latency').getAttribute('step'),'100');
+  assert.equal(await page.locator('#latency').getAttribute('min'),'100');
   const boundary=await page.evaluate(()=>({
     nav:document.querySelector('.navigation').getBoundingClientRect().toJSON(),
     content:document.querySelector('.view-container').getBoundingClientRect().toJSON(),

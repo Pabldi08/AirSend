@@ -12,6 +12,8 @@
 use std::fmt;
 use std::time::{Duration, Instant};
 mod queue;
+#[cfg(any(windows, test))]
+mod silence;
 pub use queue::{CaptureDiagnostics, CapturePolicy, CaptureReceiver, CaptureSender};
 
 use thiserror::Error;

@@ -37,7 +37,7 @@ AirSend prioriza ser gratuito, auditable y compatible con HomePod mediante AirPl
 | Tray + close-to-tray | ✅ | ✅ | ✅ |
 | Auto-reconnect al último device | ✅ | ✅ | ✅ |
 | IP manual si mDNS falla | ✅ | ❌ | ⚠️ Limitado |
-| Control del búfer AirPlay | Límite superior solicitado de 0–3000 ms; el receptor puede añadir retardo | Variable | Alta, desync ocasional |
+| Control del búfer AirPlay | Límite superior solicitado de 100–3000 ms; el receptor puede añadir retardo | Variable | Alta, desync ocasional |
 | Jitter Windows en release | ✅ MMCSS Pro Audio + HIGH_PRIORITY | ❌ | ✅ |
 | Desarrollo activo | ✅ | ❌, parado desde hace años | ✅ |
 | Código auditable | ✅ | ❌ | ❌ |
@@ -73,7 +73,7 @@ cambios todavía no están en la release publicada 0.1.7.
 - [x] Añadir dispositivo por IP manual (redes con mDNS roto: Movistar HGU, VLANs)
 - [x] Reconexión automática al último dispositivo al arrancar
 - [x] Control de volumen persistente entre sesiones
-- [x] Control deslizante de latencia (límite de búfer solicitado de 0–3000 ms) con confirmación, espera de 10 segundos y ajuste persistente; 0 ms es experimental
+- [x] Control deslizante de latencia (límite de búfer solicitado de 100–3000 ms) con confirmación, espera de 10 segundos y ajuste persistente; los ajustes de 0 ms se migran a 100 ms
 - [x] Bandeja del sistema + cerrar al tray (la app sigue activa de fondo)
 - [x] Logs rotados por día + toast de errores en la UI
 - [x] Releases manuales mediante GitHub Releases

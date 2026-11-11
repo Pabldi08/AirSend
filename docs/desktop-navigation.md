@@ -10,9 +10,10 @@ Navigation changes local view visibility and accessible current-page state only.
 It does not start/stop playback, disconnect receivers or save preferences. Empty
 states explain when a receiver must be selected before its buffering controls
 are available. Existing source locking and the upstream 100 ms slider steps,
-zero option, defaults and backend commands remain unchanged.
+100 ms minimum, defaults and backend commands remain unchanged.
 
-This branch is based directly on upstream main and is independent of the draft
+This branch includes upstream main at `05d2118`, including the merged OS 27
+compatibility, saved-zero migration and buffer validation fixes, and is independent of the draft
 HomePod OS 27 audio contribution in PR #28. It changes no audio backend code,
 Cargo dependency, timing policy or persisted audio-option schema. The only
 native configuration change is the window size/minimum. Product identifier and
@@ -43,12 +44,13 @@ npm --prefix ui run test:ui
 node ui/tests/screenshots.cjs
 ```
 
-The six existing device tests and TypeScript/Vite build are retained. Chromium
+The six existing device tests, two upstream connection tests and TypeScript/Vite
+build are retained. Chromium
 smoke coverage verifies navigation preserves streaming/preferences; controls
 remain locked while playing; stop/source changes work; English/Spanish labels,
 empty states, light/dark renders and minimum desktop sizing behave correctly.
 It also checks that the audio-only legacy timing control is absent and the
-upstream slider step remains 100 ms. Windows CI runs this harness before the
+upstream slider step and minimum remain 100 ms. Windows CI runs this harness before the
 existing Rust/build/installer checks.
 
 The previous combined candidate was installed and visually tested on Windows.

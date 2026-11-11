@@ -91,7 +91,7 @@ pub enum StreamError {
     },
     #[error("audio encoder error: {0}")]
     Encoder(String),
-    #[error("latency must be 0–3000 ms in 100 ms steps (got {0} ms)")]
+    #[error("latency must be 100–3000 ms in 100 ms steps (got {0} ms)")]
     InvalidLatency(u32),
 }
 
@@ -120,7 +120,7 @@ impl StreamError {
 }
 
 pub const DEFAULT_LATENCY_MS: u32 = 3000;
-pub const MIN_LATENCY_MS: u32 = 0;
+pub const MIN_LATENCY_MS: u32 = 100;
 pub const MAX_LATENCY_MS: u32 = 3000;
 pub const LATENCY_STEP_MS: u32 = 100;
 
@@ -137,9 +137,6 @@ pub fn validate_latency_ms(latency_ms: u32) -> Result<(), StreamError> {
 /// Receivers can choose their own delay within the range or add more buffering.
 fn latency_frames(latency_ms: u32) -> Result<(u32, u32), StreamError> {
     validate_latency_ms(latency_ms)?;
-    if latency_ms == 0 {
-        return Ok((0, 0));
-    }
     let min_ms = (latency_ms / 4).clamp(100, 500);
     Ok((min_ms * 44_100 / 1000, latency_ms * 44_100 / 1000))
 }
@@ -176,6 +173,16 @@ fn streaming_stream_config(latency_ms: u32) -> Result<StreamConfig, StreamError>
         supports_dynamic_stream_id: true,
         asc: Some(asc),
     })
+}
+
+// Use PTP when the receiver advertises it; HomePod OS 27 no longer
+// completes realtime NTP SETUP. Keep NTP for receivers without PTP support.
+fn receiver_timing_protocol(device: &ap2rs_client::Device) -> TimingProtocol {
+    if device.features.supports_ptp() {
+        TimingProtocol::Ptp
+    } else {
+        TimingProtocol::Ntp
+    }
 }
 
 /// Volumen por defecto al abrir el stream. AirPlay usa escala 0..1
@@ -357,7 +364,8 @@ async fn prepare_live_stream_once(
     let device = build_device(&descriptor)?;
     let advertised_model = device.model.clone();
     let advertised_features = device.features.0;
-    let config = streaming_stream_config(latency_ms.unwrap_or(DEFAULT_LATENCY_MS))?;
+    let mut config = streaming_stream_config(latency_ms.unwrap_or(DEFAULT_LATENCY_MS))?;
+    config.timing_protocol = receiver_timing_protocol(&device);
     let sample_rate = config.audio_format.sample_rate.as_hz();
     let channels = config.audio_format.channels;
     let metrics = Arc::new(StreamMetrics::default());
@@ -528,15 +536,36 @@ mod tests {
     use std::collections::VecDeque;
 
     #[test]
+    fn uses_advertised_ptp_and_preserves_ntp_for_other_receivers() {
+        let descriptor = DeviceDescriptor {
+            ip: "192.0.2.1".parse().unwrap(),
+            port: 7000,
+            name: "HomePod".into(),
+            mac: None,
+            model: None,
+            features: None,
+            advertised: None,
+        };
+        let mut device = descriptor.into_ap2_device().unwrap();
+        assert_eq!(receiver_timing_protocol(&device), TimingProtocol::Ntp);
+        device.features = ap2rs_core::features::Features(1 << 41);
+        assert_eq!(receiver_timing_protocol(&device), TimingProtocol::Ptp);
+    }
+
+    #[test]
     fn latency_slider_bounds_map_to_airplay_frames() {
         assert_eq!(
             latency_frames(DEFAULT_LATENCY_MS).unwrap(),
             (22_050, 132_300)
         );
         assert_eq!(latency_frames(1000).unwrap(), (11_025, 44_100));
-        assert_eq!(latency_frames(MIN_LATENCY_MS).unwrap(), (0, 0));
-        let zero_config = streaming_stream_config(0).unwrap();
-        assert_eq!((zero_config.latency_min, zero_config.latency_max), (0, 0));
+        assert_eq!(latency_frames(MIN_LATENCY_MS).unwrap(), (4_410, 4_410));
+        assert!(streaming_stream_config(0).is_err());
+        assert!(latency_frames(0).is_err());
+        for ms in (MIN_LATENCY_MS..=MAX_LATENCY_MS).step_by(LATENCY_STEP_MS as usize) {
+            let config = streaming_stream_config(ms).unwrap();
+            assert!(config.latency_min > 0 && config.latency_max >= config.latency_min);
+        }
         assert_eq!(latency_frames(200).unwrap(), (4_410, 8_820));
         for invalid in [1, 199, 250, 3100] {
             assert!(latency_frames(invalid).is_err());

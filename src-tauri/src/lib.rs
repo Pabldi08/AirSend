@@ -64,6 +64,10 @@ mod latency_tests {
         assert_eq!(decode_latency(&serde_json::json!("video")), Some(2000));
         assert_eq!(decode_latency(&serde_json::json!("gaming")), Some(1000));
         assert_eq!(decode_latency(&serde_json::json!(700)), Some(700));
+        assert_eq!(decode_latency(&serde_json::json!(0)), Some(100));
+        for invalid in [1, 50, 99, 3100, u64::MAX] {
+            assert_eq!(decode_latency(&serde_json::json!(invalid)), None);
+        }
         assert_eq!(decode_latency(&serde_json::json!(750)), None);
     }
 }
@@ -784,6 +788,7 @@ async fn start_group_streaming(
     latency_ms: u32,
     state: State<'_, StreamingState>,
 ) -> Result<Vec<StreamingInfo>, String> {
+    cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
     if device_ids.len() != 2 || device_ids[0] == device_ids[1] {
         return Err("group_requires_two_receivers".into());
     }
@@ -874,6 +879,7 @@ async fn start_streaming(
         .unwrap_or(cap_core::streaming::DEFAULT_INITIAL_VOLUME)
         .clamp(0.0, 1.0);
     let latency_ms = latency_ms.unwrap_or(cap_core::streaming::DEFAULT_LATENCY_MS);
+    cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
     if !volume.is_finite() {
         return Err("invalid_volume".into());
     }
@@ -936,6 +942,9 @@ async fn add_streaming(
     latency_ms: Option<u32>,
     state: State<'_, StreamingState>,
 ) -> Result<StreamingInfo, String> {
+    if let Some(requested) = latency_ms {
+        cap_core::streaming::validate_latency_ms(requested).map_err(|e| e.to_string())?;
+    }
     let parsed: IpAddr = ip.parse().map_err(|e| format!("IP inválida: {e}"))?;
     let port = port.unwrap_or(7000);
     let name = name.unwrap_or_else(|| format!("HomePod {parsed}"));
@@ -1404,7 +1413,7 @@ fn get_receiver_preferences(
 ) -> Result<ReceiverPreferences, String> {
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
     if let Some(value) = store.get(format!("receiver:{receiver_id}")) {
-        return serde_json::from_value(value).map_err(|e| e.to_string());
+        return ReceiverPreferences::from_stored(value);
     }
     // Lazy migration: retain the user's existing global settings for first use.
     Ok(ReceiverPreferences {
@@ -1582,7 +1591,16 @@ fn decode_latency(value: &serde_json::Value) -> Option<u32> {
         Some(_) => None,
         None => value.as_u64().and_then(|n| u32::try_from(n).ok()),
     };
-    latency_ms.filter(|ms| cap_core::streaming::validate_latency_ms(*ms).is_ok())
+    // Older releases accepted zero, which can leave HomePods silent.
+    latency_ms
+        .map(|ms| {
+            if ms == 0 {
+                cap_core::streaming::MIN_LATENCY_MS
+            } else {
+                ms
+            }
+        })
+        .filter(|ms| cap_core::streaming::validate_latency_ms(*ms).is_ok())
 }
 
 #[tauri::command]
