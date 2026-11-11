@@ -1,3 +1,4 @@
+import { initializeNavigation } from "./navigation";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { groupDevices, routesFor, type Device, type DeviceKind } from "./devices";
@@ -8,6 +9,8 @@ import {
   t,
   toggleLang,
 } from "./i18n";
+
+initializeNavigation(document);
 
 const KIND_LABEL: Record<DeviceKind, string> = {
   homepod: "HomePod",
@@ -20,6 +23,13 @@ const devicesList = document.getElementById("devices") as HTMLUListElement;
 const scanBtn = document.getElementById("scan") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLSpanElement;
 const toastEl = document.getElementById("toast") as HTMLDivElement;
+let deviceError: string | null = null;
+
+function reportDeviceError(error: unknown) {
+  deviceError = t("error_prefix", { err: String(error) });
+  statusEl.textContent = deviceError;
+  showToast(deviceError);
+}
 
 let toastTimer: number | null = null;
 function showToast(msg: string, durationMs = 5000) {
@@ -132,6 +142,7 @@ async function streamTo(device: Device, command: "start_streaming" | "add_stream
 
 async function connect(device: Device) {
   if (actionBusy || latencyApplying) return;
+  deviceError = null;
   if (playing && !multiToggle.checked) {
     const current = connectedId ? known.get(connectedId)?.name ?? t("player_playing") : t("player_playing");
     const confirmed = await askConfirmation(
@@ -184,7 +195,7 @@ async function connect(device: Device) {
     connectedId = device.id;
     await loadReceiverPreferences(device.id);
   } catch (err) {
-    statusEl.textContent = t("error_prefix", { err: String(err) });
+    reportDeviceError(err);
   } finally {
     actionBusy = false;
     connectingId = null;
@@ -194,6 +205,7 @@ async function connect(device: Device) {
 
 async function disconnect(device: Device) {
   if (actionBusy || latencyApplying) return;
+  deviceError = null;
   actionBusy = true;
   render();
   try {
@@ -223,7 +235,7 @@ async function disconnect(device: Device) {
     connectedId = null;
     connectedRoute = null;
   } catch (err) {
-    statusEl.textContent = t("error_prefix", { err: String(err) });
+    reportDeviceError(err);
   } finally {
     actionBusy = false;
     render();
@@ -296,9 +308,14 @@ let latencyTimer: number | null = null;
 function updatePlayerUi() {
   const dev = connectedId ? known.get(connectedId) : null;
   playerEl.hidden = !dev;
+  document.getElementById("player-empty")!.hidden = Boolean(dev);
+  document.getElementById("receiver-settings")!.hidden = !dev;
+  document.getElementById("receiver-settings-empty")!.hidden = Boolean(dev);
+  document.getElementById("current-receiver")!.textContent = dev?.name ?? "";
   playBtn.disabled = stopping || ((latencyApplying || actionBusy) && !playing);
   cancelOperation.hidden = !actionBusy && !latencyApplying;
   audioSource.disabled = playing || actionBusy || latencyApplying;
+  legacyTiming.disabled = playing || actionBusy || latencyApplying;
   muteLocal.disabled = !windowsAudioAvailable || playing || actionBusy || latencyApplying;
   stereoPairs.disabled = playing || actionBusy || latencyApplying;
   autoReconnect.disabled = actionBusy || latencyApplying;
@@ -539,10 +556,10 @@ function render() {
 
     devicesList.appendChild(li);
   }
-  statusEl.textContent =
+  statusEl.textContent = deviceError ?? (
     known.size === 1
       ? t("devices_count_one")
-      : t("devices_count_other", { n: known.size });
+      : t("devices_count_other", { n: known.size }));
   updatePlayerUi();
   multiToggle.disabled = synchronizedPlaying || actionBusy || latencyApplying;
   refreshLatencyUi();
@@ -563,6 +580,7 @@ function escape(s: string): string {
 }
 
 async function startScan() {
+  deviceError = null;
   scanBtn.disabled = true;
   statusEl.textContent = t("scan_searching");
   discovered.clear();
@@ -585,7 +603,7 @@ async function startScan() {
   try {
     await invoke("start_discovery_stream");
   } catch (err) {
-    statusEl.textContent = t("error_prefix", { err: String(err) });
+    reportDeviceError(err);
   }
 
   scanBtn.disabled = false;
@@ -810,15 +828,17 @@ async function loadReceiverPreferences(id: string) {
 const cancelOperation = document.getElementById("operation-cancel") as HTMLButtonElement;
 cancelOperation.addEventListener("click", () => void stopPlay());
 const audioSource = document.getElementById("audio-source") as HTMLSelectElement;
+const legacyTiming = document.getElementById("legacy-timing") as HTMLInputElement;
 const muteLocal = document.getElementById("mute-local") as HTMLInputElement;
 const audioStatus = document.getElementById("audio-options-status") as HTMLSpanElement;
 const autoReconnect = document.getElementById("auto-reconnect") as HTMLInputElement;
 autoReconnect.addEventListener("change", () => { if (connectedId) void patchReceiverPreferences(connectedId, { reconnect: autoReconnect.checked }).catch(e => showToast(String(e))); });
-interface AudioOptions { device_id: string | null; mute_local: boolean }
-let savedAudioOptions: AudioOptions = { device_id: null, mute_local: false };
+interface AudioOptions { device_id: string | null; mute_local: boolean; legacy_timing: boolean }
+let savedAudioOptions: AudioOptions = { device_id: null, mute_local: false, legacy_timing: false };
 async function loadAudioOptions() {
   savedAudioOptions = await invoke<AudioOptions>("get_audio_options");
   muteLocal.checked = savedAudioOptions.mute_local;
+  legacyTiming.checked = Boolean(savedAudioOptions.legacy_timing);
   await refreshAudioOutputs();
 }
 async function refreshAudioOutputs() {
@@ -832,13 +852,14 @@ async function refreshAudioOutputs() {
 }
 async function saveAudioOptions() {
   try {
-    const options = { device_id: audioSource.value || null, mute_local: muteLocal.checked };
+    const options = { device_id: audioSource.value || null, mute_local: muteLocal.checked, legacy_timing: legacyTiming.checked };
     await invoke("save_audio_options", { options }); savedAudioOptions = options; audioStatus.textContent = "";
   } catch (error) {
-    audioSource.value = savedAudioOptions.device_id ?? ""; muteLocal.checked = savedAudioOptions.mute_local;
+    audioSource.value = savedAudioOptions.device_id ?? ""; muteLocal.checked = savedAudioOptions.mute_local; legacyTiming.checked = Boolean(savedAudioOptions.legacy_timing);
     audioStatus.textContent = t(String(error));
   }
 }
+legacyTiming.addEventListener("change", () => void saveAudioOptions());
 audioSource.addEventListener("change", () => void saveAudioOptions());
 muteLocal.addEventListener("change", () => void saveAudioOptions());
 document.getElementById("audio-refresh")!.addEventListener("click", () => void refreshAudioOutputs().catch(e => showToast(String(e))));

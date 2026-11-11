@@ -64,7 +64,8 @@ mod latency_tests {
         assert_eq!(decode_latency(&serde_json::json!("video")), Some(2000));
         assert_eq!(decode_latency(&serde_json::json!("gaming")), Some(1000));
         assert_eq!(decode_latency(&serde_json::json!(700)), Some(700));
-        assert_eq!(decode_latency(&serde_json::json!(750)), None);
+        assert_eq!(decode_latency(&serde_json::json!(750)), Some(750));
+        assert_eq!(decode_latency(&serde_json::json!(725)), None);
     }
 }
 
@@ -397,12 +398,18 @@ async fn prepare_output(
 ) -> Result<PreparedLiveStream, String> {
     let parsed: IpAddr = ip.parse().map_err(|e| format!("IP inválida: {e}"))?;
     let descriptor = resolve_descriptor(app, None, parsed, port, name)?;
-    cap_core::streaming::prepare_live_stream(descriptor, Some(volume), Some(latency_ms), policy)
-        .await
-        .map_err(|e| {
-            diagnostics.lock().unwrap().record_failure(e.stage_code());
-            format!("stream: {e}")
-        })
+    cap_core::streaming::prepare_live_stream_with_compatibility(
+        descriptor,
+        Some(volume),
+        Some(latency_ms),
+        policy,
+        get_audio_options(app.clone())?.legacy_timing,
+    )
+    .await
+    .map_err(|e| {
+        diagnostics.lock().unwrap().record_failure(e.stage_code());
+        format!("stream: {e}")
+    })
 }
 
 async fn start_output(

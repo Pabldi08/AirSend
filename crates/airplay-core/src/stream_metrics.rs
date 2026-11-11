@@ -17,6 +17,7 @@ pub struct StreamTimings {
 pub struct StreamMetrics {
     began: Instant,
     timings: Mutex<StreamTimings>,
+    timing_protocol: Mutex<&'static str>,
     feedback_failures: AtomicU64,
     feedback_successes: AtomicU64,
     consecutive_failures: AtomicU64,
@@ -27,6 +28,7 @@ impl Default for StreamMetrics {
         Self {
             began: Instant::now(),
             timings: Mutex::new(StreamTimings::default()),
+            timing_protocol: Mutex::new("ntp"),
             feedback_failures: AtomicU64::new(0),
             feedback_successes: AtomicU64::new(0),
             consecutive_failures: AtomicU64::new(0),
@@ -34,6 +36,13 @@ impl Default for StreamMetrics {
     }
 }
 impl StreamMetrics {
+    pub(crate) fn set_timing_protocol(&self, protocol: &'static str) {
+        *self.timing_protocol.lock().unwrap() = protocol;
+    }
+    pub fn timing_protocol(&self) -> &'static str {
+        *self.timing_protocol.lock().unwrap()
+    }
+
     pub(crate) fn stage(&self, stage: &str, elapsed: Duration) {
         let ms = elapsed.as_secs_f64() * 1000.0;
         let mut timings = self.timings.lock().unwrap();

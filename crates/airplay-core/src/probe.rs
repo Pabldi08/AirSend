@@ -163,6 +163,7 @@ pub fn manual_device(ip: IpAddr, port: Option<u16>, name: Option<String>) -> Dev
         model: None,
         features: None,
         supports_airplay2: false,
+        capabilities: crate::capabilities::ReceiverCapabilities::default(),
         available: true,
         manual: true,
         server_header: None,

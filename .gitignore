@@ -28,3 +28,12 @@ Thumbs.db
 tauri_signing_*.txt
 .env
 .env.local
+
+# Machine-local audio diagnostics and credentials
+__pycache__/
+*.pyc
+.venv/
+settings.json
+settings-before-*.json
+confirmed-*-settings.json
+SHA256SUMS.local

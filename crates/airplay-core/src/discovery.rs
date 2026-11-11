@@ -48,6 +48,7 @@ pub struct Device {
     pub model: Option<String>,
     pub features: Option<String>,
     pub supports_airplay2: bool,
+    pub capabilities: crate::capabilities::ReceiverCapabilities,
     pub available: bool,
     pub manual: bool,
     pub server_header: Option<String>,
@@ -106,6 +107,10 @@ impl Device {
             .and_then(|s| ap2rs_core::features::Features::from_txt_value(s).ok())
             .map(|f| f.supports_buffered_audio() || f.supports_ptp())
             .unwrap_or(false);
+        let capabilities = crate::capabilities::ReceiverCapabilities::from_txt(
+            features.as_deref(),
+            txt.get("fex").map(String::as_str),
+        );
         Self {
             id,
             hardware_id,
@@ -117,6 +122,7 @@ impl Device {
             model,
             features,
             supports_airplay2,
+            capabilities,
             available: true,
             manual: false,
             server_header: None,
@@ -170,6 +176,22 @@ impl Device {
         }
         if let Some(version) = txt.get("vs").cloned() {
             txt.entry("srcvers".into()).or_insert(version);
+        }
+        // Newer HomePods can advertise compound group identifiers. Keep the
+        // original TXT/identity above, but don't feed an opaque optional value
+        // to the upstream UUID-only model or guess one of its components.
+        // Required identity, features and authentication fields remain strict.
+        for key in ["gid", "pgid", "tsid"] {
+            if txt
+                .get(key)
+                .is_some_and(|value| uuid::Uuid::parse_str(value).is_err())
+            {
+                txt.remove(key);
+                tracing::debug!(
+                    field = key,
+                    "optional group identifier is not representable as a UUID"
+                );
+            }
         }
         let mut advertised = ap2rs_discovery::TxtRecordParser::parse_airplay_txt(
             &descriptor.name,
@@ -332,6 +354,47 @@ impl Drop for Discovery {
 #[cfg(test)]
 mod capability_tests {
     use super::*;
+    #[test]
+    fn compound_optional_group_id_does_not_block_single_receiver_pairing() {
+        let ip = "192.0.2.10".parse().unwrap();
+        let group = "11111111-1111-4111-8111-111111111111+22222222-2222-4222-8222-222222222222";
+        let device = Device::from_txt(
+            "Office._airplay._tcp.local.".into(),
+            "Office".into(),
+            "office.local.".into(),
+            vec![ip],
+            7000,
+            HashMap::from([
+                ("deviceid".into(), "AA:BB:CC:DD:EE:FF".into()),
+                ("model".into(), "AudioAccessory11,1".into()),
+                ("features".into(), "0x445F8A00,0x801C340".into()),
+                ("gid".into(), group.into()),
+                ("pgid".into(), "not-a-uuid".into()),
+                ("tsid".into(), "33333333-3333-4333-8333-333333333333".into()),
+            ]),
+        );
+        let descriptor = device
+            .descriptor(ip, std::slice::from_ref(&device))
+            .unwrap();
+        let parsed = descriptor.into_ap2_device().unwrap();
+        assert_eq!(device.group_id.as_deref(), Some(group));
+        assert_eq!(device.txt.get("gid").map(String::as_str), Some(group));
+        assert!(parsed.group_id.is_none());
+        assert!(parsed.parent_group_id.is_none());
+        assert_eq!(
+            parsed.tight_sync_id.unwrap().to_string(),
+            "33333333-3333-4333-8333-333333333333"
+        );
+        assert_eq!(parsed.model, "AudioAccessory11,1");
+        assert_ne!(parsed.features.0, 0);
+        let mut invalid_identity = device.clone();
+        invalid_identity.hardware_id = None;
+        invalid_identity
+            .txt
+            .insert("deviceid".into(), "not-a-mac".into());
+        assert!(invalid_identity.descriptor(ip, &[]).is_err());
+    }
+
     #[test]
     fn denon_txt_keeps_codec_auth_model_and_identity_across_routes() {
         let ip = "192.0.2.93".parse().unwrap();

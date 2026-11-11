@@ -1,0 +1,11 @@
+{
+  "upstream": "https://github.com/DavidTIBO/airplay2-rs",
+  "revision": "9edef3287ae1ade1248ea4f18f1bc41a8780005b",
+  "based_on": "Pabldi08/airplay2-rs dc66e2b3df1ad87a34fd9c859ec452bd787154e1",
+  "local_changes": [
+    "PTP exchange validation and one-way fallback tests",
+    "Live RTP gap regression tests",
+    "Trim inherited trailing whitespace"
+  ],
+  "license_file": "LICENSE"
+}

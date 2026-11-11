@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["vendor/airplay2-rs"]
 members = [
     "crates/airplay-core",  # paquete renombrado a `cap-core` (Conexión AirPlay)
     "crates/audio-capture",

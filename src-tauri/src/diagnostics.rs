@@ -131,7 +131,7 @@ impl Record {
             let s = output.sender.snapshot();
             let (timings, successes, failures) = output.metrics.snapshot();
             serde_json::json!({
-                "receiver": index + 1, "transport_scope": output.transport_scope, "timings": timings,
+                "receiver": index + 1, "transport_scope": output.transport_scope, "timings": timings, "timing_protocol": output.metrics.timing_protocol(),
                 "feedback_successes": successes, "feedback_failures": failures,
                 "input_queued_blocks": s.queued_blocks, "input_queue_drops": s.queue_drops,
                 "stale_drops": s.stale_drops, "packets_sent": s.packets_sent, "send_errors": s.send_errors,
@@ -140,9 +140,25 @@ impl Record {
                 "first_packet_age_ms": s.first_packet_age_us.map(|v| v as f64 / 1000.0),
             })
         }).collect();
+        let timing = self
+            .outputs
+            .first()
+            .map(|first| {
+                let protocol = first.metrics.timing_protocol();
+                if self
+                    .outputs
+                    .iter()
+                    .all(|o| o.metrics.timing_protocol() == protocol)
+                {
+                    protocol
+                } else {
+                    "mixed"
+                }
+            })
+            .unwrap_or("unknown");
         serde_json::json!({
             "status": self.status, "last_failure_stage": self.last_failure_stage, "session_duration_ms": self.ended.unwrap_or_else(Instant::now).saturating_duration_since(self.began).as_millis() as u64,
-            "audio_format": { "sample_rate": 44_100, "channels": 2, "sample_bits": 16, "codec": "alac", "timing": "ntp" },
+            "audio_format": { "sample_rate": 44_100, "channels": 2, "sample_bits": 16, "codec": "alac", "timing": timing },
             "requested_receiver_latency_ms": self.requested_latency_ms, "local_buffer_policy": self.policy,
             "capture_start_ms": self.capture_start_ms, "capture": self.capture,
             "blocks_forwarded": self.forwarded, "blocks_rejected": self.rejected,

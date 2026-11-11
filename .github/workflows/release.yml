@@ -88,10 +88,20 @@ jobs:
         run: npm --prefix ui ci
 
       - name: UI regression tests
-        run: npm --prefix ui run test:devices
+        run: npm --prefix ui test
 
+      - name: Build UI
+        run: npm --prefix ui run build
+      - name: Install UI test browser
+        working-directory: ui
+        run: npx playwright install chromium
+      - name: Desktop UI smoke test
+        working-directory: ui
+        run: node tests/smoke.cjs
       - name: Rust regression tests
         run: cargo test --workspace --all-targets --locked
+      - name: Sender clock and RTP regression tests
+        run: cargo test --manifest-path vendor/airplay2-rs/Cargo.toml -p airplay-timing -p airplay-audio --lib --locked
 
       - name: Build and publish
         uses: tauri-apps/tauri-action@v0

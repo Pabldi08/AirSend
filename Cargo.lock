@@ -55,7 +55,6 @@ dependencies = [
 [[package]]
 name = "airplay-audio"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=dc66e2b3df1ad87a34fd9c859ec452bd787154e1#dc66e2b3df1ad87a34fd9c859ec452bd787154e1"
 dependencies = [
  "airplay-core",
  "airplay-crypto",
@@ -79,7 +78,6 @@ dependencies = [
 [[package]]
 name = "airplay-client"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=dc66e2b3df1ad87a34fd9c859ec452bd787154e1#dc66e2b3df1ad87a34fd9c859ec452bd787154e1"
 dependencies = [
  "airplay-audio",
  "airplay-core",
@@ -102,7 +100,6 @@ dependencies = [
 [[package]]
 name = "airplay-core"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=dc66e2b3df1ad87a34fd9c859ec452bd787154e1#dc66e2b3df1ad87a34fd9c859ec452bd787154e1"
 dependencies = [
  "serde",
  "thiserror 1.0.69",
@@ -112,7 +109,6 @@ dependencies = [
 [[package]]
 name = "airplay-crypto"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=dc66e2b3df1ad87a34fd9c859ec452bd787154e1#dc66e2b3df1ad87a34fd9c859ec452bd787154e1"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -138,7 +134,6 @@ dependencies = [
 [[package]]
 name = "airplay-discovery"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=dc66e2b3df1ad87a34fd9c859ec452bd787154e1#dc66e2b3df1ad87a34fd9c859ec452bd787154e1"
 dependencies = [
  "airplay-core",
  "async-stream",
@@ -154,7 +149,6 @@ dependencies = [
 [[package]]
 name = "airplay-pairing"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=dc66e2b3df1ad87a34fd9c859ec452bd787154e1#dc66e2b3df1ad87a34fd9c859ec452bd787154e1"
 dependencies = [
  "airplay-core",
  "airplay-crypto",
@@ -168,7 +162,6 @@ dependencies = [
 [[package]]
 name = "airplay-resampler"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=dc66e2b3df1ad87a34fd9c859ec452bd787154e1#dc66e2b3df1ad87a34fd9c859ec452bd787154e1"
 dependencies = [
  "airplay-core",
  "fastrand",
@@ -179,7 +172,6 @@ dependencies = [
 [[package]]
 name = "airplay-rtsp"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=dc66e2b3df1ad87a34fd9c859ec452bd787154e1#dc66e2b3df1ad87a34fd9c859ec452bd787154e1"
 dependencies = [
  "airplay-core",
  "airplay-crypto",
@@ -199,7 +191,6 @@ dependencies = [
 [[package]]
 name = "airplay-timing"
 version = "0.1.0"
-source = "git+https://github.com/Pabldi08/airplay2-rs?rev=dc66e2b3df1ad87a34fd9c859ec452bd787154e1#dc66e2b3df1ad87a34fd9c859ec452bd787154e1"
 dependencies = [
  "airplay-core",
  "async-trait",
@@ -573,6 +564,7 @@ dependencies = [
  "airplay-pairing",
  "async-trait",
  "audio-capture",
+ "base64 0.22.1",
  "crossbeam-channel",
  "mdns-sd",
  "serde",
@@ -580,6 +572,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

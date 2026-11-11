@@ -91,7 +91,7 @@ pub enum StreamError {
     },
     #[error("audio encoder error: {0}")]
     Encoder(String),
-    #[error("latency must be 0–3000 ms in 100 ms steps (got {0} ms)")]
+    #[error("latency must be 0–3000 ms in 50 ms steps (got {0} ms)")]
     InvalidLatency(u32),
 }
 
@@ -122,7 +122,7 @@ impl StreamError {
 pub const DEFAULT_LATENCY_MS: u32 = 3000;
 pub const MIN_LATENCY_MS: u32 = 0;
 pub const MAX_LATENCY_MS: u32 = 3000;
-pub const LATENCY_STEP_MS: u32 = 100;
+pub const LATENCY_STEP_MS: u32 = 50;
 
 pub fn validate_latency_ms(latency_ms: u32) -> Result<(), StreamError> {
     if (MIN_LATENCY_MS..=MAX_LATENCY_MS).contains(&latency_ms) && latency_ms % LATENCY_STEP_MS == 0
@@ -140,7 +140,7 @@ fn latency_frames(latency_ms: u32) -> Result<(u32, u32), StreamError> {
     if latency_ms == 0 {
         return Ok((0, 0));
     }
-    let min_ms = (latency_ms / 4).clamp(100, 500);
+    let min_ms = (latency_ms / 4).clamp(100, 500).min(latency_ms);
     Ok((min_ms * 44_100 / 1000, latency_ms * 44_100 / 1000))
 }
 
@@ -176,6 +176,26 @@ fn streaming_stream_config(latency_ms: u32) -> Result<StreamConfig, StreamError>
         supports_dynamic_stream_id: true,
         asc: Some(asc),
     })
+}
+
+fn receiver_timing(
+    model: &str,
+    os: Option<&str>,
+    ptp_capable: bool,
+    legacy: bool,
+) -> TimingProtocol {
+    let os_major = os
+        .and_then(|s| s.split('.').next())
+        .and_then(|s| s.parse::<u32>().ok());
+    if !legacy
+        && model.starts_with("AudioAccessory")
+        && os_major.is_some_and(|v| v >= 27)
+        && ptp_capable
+    {
+        TimingProtocol::Ptp
+    } else {
+        TimingProtocol::Ntp
+    }
 }
 
 /// Volumen por defecto al abrir el stream. AirPlay usa escala 0..1
@@ -332,9 +352,28 @@ pub async fn prepare_live_stream(
     latency_ms: Option<u32>,
     policy: LocalBufferPolicy,
 ) -> Result<PreparedLiveStream, StreamError> {
+    prepare_live_stream_with_compatibility(descriptor, initial_volume, latency_ms, policy, false)
+        .await
+}
+
+pub async fn prepare_live_stream_with_compatibility(
+    descriptor: DeviceDescriptor,
+    initial_volume: Option<f32>,
+    latency_ms: Option<u32>,
+    policy: LocalBufferPolicy,
+    legacy_timing: bool,
+) -> Result<PreparedLiveStream, StreamError> {
     validate_latency_ms(latency_ms.unwrap_or(DEFAULT_LATENCY_MS))?;
     let result = retry_once_on_timeout(
-        || prepare_live_stream_once(descriptor.clone(), initial_volume, latency_ms, policy),
+        || {
+            prepare_live_stream_once(
+                descriptor.clone(),
+                initial_volume,
+                latency_ms,
+                policy,
+                legacy_timing,
+            )
+        },
         CONNECTION_RETRY_DELAY,
     )
     .await;
@@ -353,14 +392,26 @@ async fn prepare_live_stream_once(
     initial_volume: Option<f32>,
     latency_ms: Option<u32>,
     policy: LocalBufferPolicy,
+    legacy_timing: bool,
 ) -> Result<PreparedLiveStream, StreamError> {
     let device = build_device(&descriptor)?;
     let advertised_model = device.model.clone();
     let advertised_features = device.features.0;
-    let config = streaming_stream_config(latency_ms.unwrap_or(DEFAULT_LATENCY_MS))?;
+    let mut config = streaming_stream_config(latency_ms.unwrap_or(DEFAULT_LATENCY_MS))?;
+    config.timing_protocol = receiver_timing(
+        &device.model,
+        device.os_version.as_deref(),
+        device.features.supports_ptp(),
+        legacy_timing,
+    );
     let sample_rate = config.audio_format.sample_rate.as_hz();
     let channels = config.audio_format.channels;
     let metrics = Arc::new(StreamMetrics::default());
+    metrics.set_timing_protocol(if config.timing_protocol == TimingProtocol::Ptp {
+        "ptp"
+    } else {
+        "ntp"
+    });
     let began = Instant::now();
     tracing::info!(ip = %descriptor.ip, "open_live_stream: conectando + pairing");
     let mut connection = Connection::connect_with_pin(device, config, HOMEPOD_TRANSIENT_PIN)
@@ -538,8 +589,31 @@ mod tests {
         let zero_config = streaming_stream_config(0).unwrap();
         assert_eq!((zero_config.latency_min, zero_config.latency_max), (0, 0));
         assert_eq!(latency_frames(200).unwrap(), (4_410, 8_820));
-        for invalid in [1, 199, 250, 3100] {
+        assert_eq!(latency_frames(50).unwrap(), (2205, 2205));
+        assert_eq!(latency_frames(150).unwrap(), (4410, 6615));
+        for invalid in [1, 199, 225, 3050, 3100] {
             assert!(latency_frames(invalid).is_err());
+        }
+    }
+    #[test]
+    fn automatic_ptp_is_limited_to_supported_homepod_os27_and_can_be_overridden() {
+        assert_eq!(
+            receiver_timing("AudioAccessory11,1", Some("27.2"), true, false),
+            TimingProtocol::Ptp
+        );
+        for (model, os, capable, legacy) in [
+            ("AudioAccessory5,1", Some("26.5"), true, false),
+            ("AudioAccessory11,1", None, true, false),
+            ("AudioAccessory11,1", Some("invalid"), true, false),
+            ("AppleTV14,1", Some("27.2"), true, false),
+            ("OtherSpeaker", Some("27.2"), true, false),
+            ("AudioAccessory11,1", Some("27.2"), false, false),
+            ("AudioAccessory11,1", Some("27.2"), true, true),
+        ] {
+            assert_eq!(
+                receiver_timing(model, os, capable, legacy),
+                TimingProtocol::Ntp
+            );
         }
     }
     fn timeout(stage: StreamStage) -> StreamError {
@@ -714,6 +788,7 @@ pub async fn prepare_group_live_stream(
             source,
         })?;
         let metric = Arc::new(StreamMetrics::default());
+        metric.set_timing_protocol("ptp");
         metric.stage("connect_pair", began.elapsed());
         metrics.push(metric);
         connections.push(connection);

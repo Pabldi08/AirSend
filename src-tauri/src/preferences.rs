@@ -28,6 +28,7 @@ impl ReceiverPreferences {
 pub struct AudioOptions {
     pub device_id: Option<String>,
     pub mute_local: bool,
+    pub legacy_timing: bool,
 }
 
 #[derive(Deserialize)]
@@ -74,5 +75,16 @@ mod tests {
             preferences.volume = invalid;
             assert!(preferences.validate().is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod audio_compatibility_tests {
+    #[test]
+    fn existing_capture_preferences_default_to_automatic_timing() {
+        let options: super::AudioOptions =
+            serde_json::from_str(r#"{"device_id":"saved-output","mute_local":false}"#).unwrap();
+        assert!(!options.legacy_timing);
+        assert_eq!(options.device_id.as_deref(), Some("saved-output"));
     }
 }

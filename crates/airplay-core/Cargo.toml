@@ -15,18 +15,16 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 mdns-sd = { workspace = true }
 async-trait = "0.1"
+uuid = "1"
+base64 = "0.22"
 
-# Reutilizamos el sender AirPlay 2 alpha de lmcgartland/airplay2-rs
-# (GPL-3.0-or-later).
-# Apuntamos a nuestro fork `Pabldi08/airplay2-rs` con un parche mínimo
-# (`set_socket_qos` gated detrás de `#[cfg(unix)]`, stub en Windows, y prioridad
-# MMCSS correcta para el sender) porque el upstream no compila en MSVC tal cual.
-# Renombramos los paquetes para no colisionar con nuestro crate local (también
-# llamado airplay-core en el repo upstream).
-ap2rs-pairing = { package = "airplay-pairing", git = "https://github.com/Pabldi08/airplay2-rs", rev = "dc66e2b3df1ad87a34fd9c859ec452bd787154e1" }
-ap2rs-core = { package = "airplay-core", git = "https://github.com/Pabldi08/airplay2-rs", rev = "dc66e2b3df1ad87a34fd9c859ec452bd787154e1" }
-ap2rs-client = { package = "airplay-client", git = "https://github.com/Pabldi08/airplay2-rs", rev = "dc66e2b3df1ad87a34fd9c859ec452bd787154e1" }
-ap2rs-audio = { package = "airplay-audio", git = "https://github.com/Pabldi08/airplay2-rs", rev = "dc66e2b3df1ad87a34fd9c859ec452bd787154e1" }
+# Reviewed DavidTIBO/airplay2-rs revision 9edef328, vendored with local clock
+# validation/regression fixes. Provenance and original license are retained in
+# vendor/airplay2-rs. All aliases resolve to the same vendored workspace.
+ap2rs-pairing = { package = "airplay-pairing", path = "../../vendor/airplay2-rs/crates/airplay-pairing" }
+ap2rs-core = { package = "airplay-core", path = "../../vendor/airplay2-rs/crates/airplay-core" }
+ap2rs-client = { package = "airplay-client", path = "../../vendor/airplay2-rs/crates/airplay-client" }
+ap2rs-audio = { package = "airplay-audio", path = "../../vendor/airplay2-rs/crates/airplay-audio" }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
@@ -56,5 +54,4 @@ version = "0.5"
 
 [dependencies.ap2rs-discovery]
 package = "airplay-discovery"
-git = "https://github.com/Pabldi08/airplay2-rs"
-rev = "dc66e2b3df1ad87a34fd9c859ec452bd787154e1"
+path = "../../vendor/airplay2-rs/crates/airplay-discovery"

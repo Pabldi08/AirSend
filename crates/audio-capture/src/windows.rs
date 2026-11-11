@@ -340,6 +340,10 @@ fn capture_thread_main(
         VecDeque::with_capacity(bytes_per_frame * (buffer_frame_count as usize + CHUNK_FRAMES) * 4);
 
     let chunk_bytes = CHUNK_FRAMES * bytes_per_frame;
+    let mut capture_discontinuities = 0u64;
+    let mut capture_timestamp_errors = 0u64;
+    let mut interval_sample_frames = 0u64;
+    let mut max_packets_per_wake = 0u64;
     let mut chunks_captured = 0u64;
     let mut chunks_silence = 0u64;
     let mut chunks_dropped = 0u64;
@@ -396,9 +400,37 @@ fn capture_thread_main(
 
         // Drenamos lo que haya disponible y, mientras tengamos ≥ un chunk,
         // empaquetamos y mandamos.
-        capture_client
-            .read_from_device_to_deque(&mut byte_queue)
-            .map_err(|e| format!("read_from_device_to_deque: {e}"))?;
+        // A shared-mode notification can represent multiple packets. Reading only
+        // one and waiting again can leave audio behind in the engine buffer.
+        // Drain until GetNextPacketSize returns zero, as required by WASAPI.
+        let mut packets_this_wake = 0u64;
+        while running.load(Ordering::SeqCst)
+            && capture_client
+                .get_next_nbr_frames()
+                .map_err(|e| format!("get_next_nbr_frames: {e}"))?
+                .is_some_and(|frames| frames > 0)
+        {
+            let previous_len = byte_queue.len();
+            let flags = capture_client
+                .read_from_device_to_deque(&mut byte_queue)
+                .map_err(|e| format!("read_from_device_to_deque: {e}"))?;
+            let added_bytes = byte_queue.len() - previous_len;
+            if added_bytes == 0 {
+                break;
+            }
+            // The contents of a SILENT packet are undefined. wasapi 0.15
+            // copies those bytes without clearing them, so explicitly zero them.
+            if flags.silent {
+                for byte in byte_queue.iter_mut().skip(previous_len) {
+                    *byte = 0;
+                }
+            }
+            interval_sample_frames += (added_bytes / bytes_per_frame) as u64;
+            capture_discontinuities += u64::from(flags.data_discontinuity);
+            capture_timestamp_errors += u64::from(flags.timestamp_error);
+            packets_this_wake += 1;
+        }
+        max_packets_per_wake = max_packets_per_wake.max(packets_this_wake);
 
         let mut produced = false;
         while byte_queue.len() >= chunk_bytes {
@@ -464,10 +496,13 @@ fn capture_thread_main(
         let idle = last_real_audio.elapsed() >= SILENCE_AFTER_IDLE;
         if idle {
             let now = Instant::now();
-            if now >= silence_next {
+            if now.saturating_duration_since(silence_next) > chunk_duration * 4 {
+                silence_next = now;
+            }
+            while now >= silence_next {
                 // No acumulamos silencio en la cola. Si vuelve el audio real,
                 // como máximo habrá dos paquetes mudos por delante.
-                if tx.len() < 2 {
+                if tx.len() < 4 {
                     match tx.try_send(CapturedFrame::new(
                         vec![0i16; chunk_samples],
                         target_channels,
@@ -479,7 +514,7 @@ fn capture_thread_main(
                 }
                 // Un bloqueo largo descarta tiempo pasado en vez de enviar
                 // una ráfaga de paquetes que elevaría la latencia.
-                silence_next = now + chunk_duration;
+                silence_next += chunk_duration;
             }
         } else {
             silence_next = last_real_audio + SILENCE_AFTER_IDLE;
@@ -488,6 +523,11 @@ fn capture_thread_main(
         if last_report.elapsed() >= DIAGNOSTICS_INTERVAL {
             tracing::info!(
                 chunks_captured,
+                capture_discontinuities,
+                capture_timestamp_errors,
+                capture_sample_rate =
+                    interval_sample_frames as f64 / last_report.elapsed().as_secs_f64(),
+                max_packets_per_wake,
                 chunks_silence,
                 chunks_dropped,
                 max_event_gap_ms = max_event_gap.as_millis(),
@@ -496,6 +536,8 @@ fn capture_thread_main(
                 "WASAPI capture diagnostics"
             );
             last_report = Instant::now();
+            interval_sample_frames = 0;
+            max_packets_per_wake = 0;
             max_event_gap = Duration::ZERO;
         }
 
