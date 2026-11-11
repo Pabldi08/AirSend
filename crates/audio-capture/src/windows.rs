@@ -496,12 +496,9 @@ fn capture_thread_main(
         let idle = last_real_audio.elapsed() >= SILENCE_AFTER_IDLE;
         if idle {
             let now = Instant::now();
-            if now.saturating_duration_since(silence_next) > chunk_duration * 4 {
-                silence_next = now;
-            }
-            while now >= silence_next {
-                // No acumulamos silencio en la cola. Si vuelve el audio real,
-                // como máximo habrá dos paquetes mudos por delante.
+            let due = crate::silence::due_chunks(&mut silence_next, now, chunk_duration);
+            for _ in 0..due {
+                // At most four queued chunks, enough for a 15.6 ms timer wake.
                 if tx.len() < 4 {
                     match tx.try_send(CapturedFrame::new(
                         vec![0i16; chunk_samples],
@@ -512,9 +509,6 @@ fn capture_thread_main(
                         Err(_) => chunks_dropped += 1,
                     }
                 }
-                // Un bloqueo largo descarta tiempo pasado en vez de enviar
-                // una ráfaga de paquetes que elevaría la latencia.
-                silence_next += chunk_duration;
             }
         } else {
             silence_next = last_real_audio + SILENCE_AFTER_IDLE;

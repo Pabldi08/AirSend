@@ -20,13 +20,6 @@ const devicesList = document.getElementById("devices") as HTMLUListElement;
 const scanBtn = document.getElementById("scan") as HTMLButtonElement;
 const statusEl = document.getElementById("status") as HTMLSpanElement;
 const toastEl = document.getElementById("toast") as HTMLDivElement;
-let deviceError: string | null = null;
-
-function reportDeviceError(error: unknown) {
-  deviceError = t("error_prefix", { err: String(error) });
-  statusEl.textContent = deviceError;
-  showToast(deviceError);
-}
 
 let toastTimer: number | null = null;
 function showToast(msg: string, durationMs = 5000) {
@@ -70,6 +63,7 @@ let connectingId: string | null = null;
 let connectedRoute: Device | null = null;
 const activeRoutes = new Map<string, Device>();
 let actionBusy = false;
+let connectionError: string | null = null;
 let activeGeneration = 0;
 let intentSequence = 0;
 let stopping = false;
@@ -139,7 +133,6 @@ async function streamTo(device: Device, command: "start_streaming" | "add_stream
 
 async function connect(device: Device) {
   if (actionBusy || latencyApplying) return;
-  deviceError = null;
   if (playing && !multiToggle.checked) {
     const current = connectedId ? known.get(connectedId)?.name ?? t("player_playing") : t("player_playing");
     const confirmed = await askConfirmation(
@@ -152,6 +145,7 @@ async function connect(device: Device) {
   const intent = ++intentSequence;
   actionBusy = true;
   connectingId = device.id;
+  connectionError = null;
   render();
   try {
     if (playing) {
@@ -192,7 +186,8 @@ async function connect(device: Device) {
     connectedId = device.id;
     await loadReceiverPreferences(device.id);
   } catch (err) {
-    reportDeviceError(err);
+    connectionError = t("error_prefix", { err: String(err) });
+    showToast(connectionError);
   } finally {
     actionBusy = false;
     connectingId = null;
@@ -202,8 +197,8 @@ async function connect(device: Device) {
 
 async function disconnect(device: Device) {
   if (actionBusy || latencyApplying) return;
-  deviceError = null;
   actionBusy = true;
+  connectionError = null;
   render();
   try {
     if (playing && synchronizedPlaying) { await stopPlay(); return; }
@@ -232,7 +227,8 @@ async function disconnect(device: Device) {
     connectedId = null;
     connectedRoute = null;
   } catch (err) {
-    reportDeviceError(err);
+    connectionError = t("error_prefix", { err: String(err) });
+    showToast(connectionError);
   } finally {
     actionBusy = false;
     render();
@@ -549,8 +545,7 @@ function render() {
 
     devicesList.appendChild(li);
   }
-  statusEl.textContent = deviceError ?? (
-    known.size === 1
+  statusEl.textContent = connectionError ?? (known.size === 1
       ? t("devices_count_one")
       : t("devices_count_other", { n: known.size }));
   updatePlayerUi();
@@ -573,7 +568,6 @@ function escape(s: string): string {
 }
 
 async function startScan() {
-  deviceError = null;
   scanBtn.disabled = true;
   statusEl.textContent = t("scan_searching");
   discovered.clear();
@@ -596,7 +590,7 @@ async function startScan() {
   try {
     await invoke("start_discovery_stream");
   } catch (err) {
-    reportDeviceError(err);
+    statusEl.textContent = t("error_prefix", { err: String(err) });
   }
 
   scanBtn.disabled = false;

@@ -1,6 +1,6 @@
 # HomePod OS 27 audio candidate (draft)
 
-This audio-only candidate follows the existing integration at `e93535b`. A HomePod
+This audio-only draft includes upstream `main` at `05d2118`. A HomePod
 running software 27.2 would connect but had excessive delay or crackling when
 lower buffers were requested with the previous timing path. In the tested
 Windows setup, automatic PTP timing and capture/timeline recovery allowed clean
@@ -10,7 +10,7 @@ guarantee. Results need validation on other receivers and networks.
 
 ## Relationship to existing upstream work
 
-Upstream draft [PR #26](https://github.com/Pabldi08/AirSend/pull/26) already
+Merged upstream [PR #26](https://github.com/Pabldi08/AirSend/pull/26) already
 addresses HomePod OS 27 connection/timing and idle audio. This contribution
 overlaps those fixes and adds WASAPI packet draining,
 legacy timing override, timing diagnostics and further regression coverage.
@@ -19,10 +19,10 @@ than #26's feature-based selection for all PTP-capable receivers. The maintainer
 should reconcile those policies and dependency changes rather than merge both
 implementations blindly.
 
-Upstream draft [PR #27](https://github.com/Pabldi08/AirSend/pull/27) separately
-removes the zero receiver-buffer option. This contribution retains main's
-existing zero option; the 50 ms step support is not evidence that zero works.
-It does not supersede #27's migration and minimum-buffer fix.
+Merged upstream [PR #27](https://github.com/Pabldi08/AirSend/pull/27) separately
+removes the zero receiver-buffer option. The current draft preserves that migration for global and per-receiver settings
+and rejects requests below 100 ms. The 50 ms step size still allows values such
+as 150 and 250 ms; it does not allow a 50 ms requested buffer.
 
 ## Audio changes
 
@@ -55,21 +55,20 @@ land those changes in their sender fork and restore a pinned Git dependency.
 
 ## Pending before audio review/merge
 
-The maintainer requested the following in PR #28. They remain open in this
-candidate; marking it draft does not mean these fixes are implemented:
+The maintainer requested the following in PR #28. The negotiation and licensing items remain open; incorporating the merged
+minimum/migration fixes does not resolve them:
 
 - Handle PTP negotiation failures explicitly. Do not leave a failed preparation
   looking like successful streaming; agree the fallback/error policy with #26.
-- Preserve #27's migration for saved 0 ms global and per-receiver settings.
-- Keep the minimum requested receiver buffer at 100 ms until hardware results
-  support 50 ms. This candidate still retains zero and 50 ms requests, so it must
-  not ship unchanged.
+- Preserve the merged upstream fixes during further timing work. The current
+  branch includes #27's global/per-receiver zero migration, 100 ms minimum and
+  pre-state-change validation. Regression checks cover these cases.
 - Resolve the sender licensing discrepancy identified by the maintainer before
   distributing an installer with the updated dependency. Exact source and
   existing license files are preserved here; they are not a licensing conclusion.
 
 Desktop navigation/layout and anonymized screenshots have been moved to a
-separate PR based directly on main. This candidate retains the original narrow
+separate PR [#29](https://github.com/Pabldi08/AirSend/pull/29) based on main. This candidate retains the original narrow
 layout and only adds the legacy-timing control needed by its audio preference.
 
 ## Validation
@@ -114,3 +113,9 @@ not recordings. Its README describes setup and measurement limitations.
   Independent AAC/OpenAir research and local settings/logs are excluded.
 - Desktop navigation is submitted separately. The vendored sender accounts for
   most of the added source lines in this audio candidate.
+
+After merging upstream `05d2118`, the separated audio branch passed 37 application
+Rust tests, eight frontend tests and the production frontend build on Linux.
+This includes upstream saved-zero migration, invalid-buffer-before-state-change
+and compound receiver-group metadata regression cases. No new hardware run was
+performed for this draft update.

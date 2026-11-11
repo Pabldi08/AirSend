@@ -4,7 +4,7 @@
 
 - Preparación de pairing y SETUP antes de iniciar la captura.
 - Pump activo antes de esperar al buffer inicial del motor; también al añadir un receptor a una captura existente.
-- Política estable predeterminada: configuración AirPlay ALAC/NTP y buffers del motor conservados. El slider mantiene 0–3.000 ms, confirmación y 10 segundos entre cambios.
+- Política estable predeterminada: configuración AirPlay ALAC/NTP y buffers del motor conservados. El slider admite 100–3.000 ms; los ajustes guardados de 0 ms se migran a 100 ms. Mantiene, confirmación y 10 segundos entre cambios.
 - Opción «Búfer local reducido (experimental)», desactivada por defecto y modificable con la reproducción parada.
 - En el modo experimental: cola de captura limitada a 60 ms, cola de entrada de siete bloques de 352 frames, buffer del motor de hasta 80 ms, objetivo inicial de 24 ms y cola de envío de dos paquetes. El motor descarta audio con más de 120 ms desde su timestamp de captura al preparar/enviar. Los tamaños efectivos se redondean a paquetes completos.
 - Métricas de las últimas seis sesiones, con tiempos de las etapas, contadores de saturación/descartes, edad del audio, buffer del encoder, paquetes enviados, errores UDP y resultados de heartbeats.
@@ -19,7 +19,7 @@ Los límites locales anteriores **no son una promesa de 120 ms de retraso audibl
 2. Instalar el build de prueba de la PR. Dejar «Búfer local reducido» desactivado y repetir inicio, música continua, silencio/reanudación, parada y vuelta a reproducir.
 3. Descargar un diagnóstico tras al menos 20 segundos de reproducción y otro después de parar. Los contadores de captura se actualizan cada 10 segundos y al terminar el pump; las métricas del motor se leen al exportar.
 4. Parar, activar «Búfer local reducido» y repetir con los mismos valores. Guardar otro diagnóstico.
-5. Probar 0, 100, 300, 1.000 y 3.000 ms, respetando la confirmación y el intervalo de 10 segundos. Los valores bajos pueden producir cortes o ser rechazados por el receptor.
+5. Probar 100, 300, 1.000 y 3.000 ms, respetando la confirmación y el intervalo de 10 segundos. Los valores bajos pueden producir cortes o ser rechazados por el receptor.
 6. Para cuantificar demora audible, grabar una señal de referencia y la salida del HomePod con una referencia temporal independiente. La sincronización visual de un vídeo y los contadores de paquetes no bastan para afirmar una cifra acústica exacta.
 
 Registrar versión de Windows/HomePod, tipo de conexión, retardo percibido y cortes por prueba junto al JSON. Esos datos de contexto se añaden voluntariamente; la exportación no los obtiene de dispositivos ni cuentas.
