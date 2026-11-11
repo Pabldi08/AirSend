@@ -7,128 +7,77 @@
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
-    <main>
-      <header>
-        <div class="header-row">
-          <h1>AirSend</h1>
-          <button
-            id="lang-toggle"
-            class="lang-toggle"
-            type="button"
-            data-i18n="lang_toggle_to_en"
-            data-i18n-attr="title:lang_toggle_title,aria-label:lang_toggle_title"
-          >EN</button>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand"><h1>AirSend</h1><span data-i18n="nav_tagline">Audio de Windows, por AirPlay</span></div>
+        <nav class="navigation" data-i18n-attr="aria-label:nav_label">
+          <button type="button" class="nav-item" data-view="speakers" aria-controls="view-speakers" aria-current="page" data-i18n="nav_speakers">Altavoces</button>
+          <button type="button" class="nav-item" data-view="audio" aria-controls="view-audio" data-i18n="nav_audio">Audio</button>
+          <button type="button" class="nav-item" data-view="diagnostics" aria-controls="view-diagnostics" data-i18n="nav_diagnostics">Diagnóstico</button>
+        </nav>
+        <div class="sidebar-footer">
+          <button id="check-updates" type="button" class="quiet-button" data-i18n="check_updates">Buscar actualizaciones</button>
+          <div class="language-row"><span data-i18n="language">Idioma</span><button id="lang-toggle" class="lang-toggle" type="button" data-i18n="lang_toggle_to_en" data-i18n-attr="title:lang_toggle_title,aria-label:lang_toggle_title">EN</button></div>
         </div>
-        <p class="subtitle" data-i18n="subtitle">Envía el audio de Windows a tu HomePod</p>
-      </header>
-      <section>
-        <div class="row">
-          <button id="scan" data-i18n="scan">Buscar dispositivos</button>
-          <button id="operation-cancel" type="button" hidden data-i18n="cancel">Cancelar</button>
-          <span id="status" class="status"></span>
-        </div>
-        <ul id="devices"></ul>
-        <div class="multi-control">
-          <label for="multi-device">
-            <input id="multi-device" type="checkbox" />
-            <span data-i18n="multi_device">Reproducir en varios dispositivos</span>
-          </label>
-          <p class="hint" data-i18n="multi_device_hint">Experimental: al conectar otro receptor durante la reproducción, se añadirá al audio actual. Los receptores pueden no estar perfectamente sincronizados.</p>
-        </div>
-        <details class="manual">
-          <summary data-i18n="audio_source">Fuente de audio de Windows</summary>
-          <label class="source-label" for="audio-source" data-i18n="audio_source">Fuente de audio de Windows</label>
-          <select id="audio-source"><option value="" data-i18n="audio_default">Salida predeterminada</option></select>
-          <button id="audio-refresh" type="button" data-i18n="refresh">Actualizar</button>
-          <p class="hint" data-i18n="audio_source_hint">Captura las aplicaciones que reproducen en esa salida. No redirige las aplicaciones a otro dispositivo.</p>
-          <label><input id="mute-local" type="checkbox" /><span data-i18n="mute_local">Silenciar salida local (experimental)</span></label>
-          <p class="hint" data-i18n="mute_hint">Se prueba mientras llega audio. Si el silencio corta la captura, se restaura la salida. Se restaura también al parar.</p>
-          <span id="audio-options-status" class="status" role="status"></span>
-        </details>
-        <details class="manual">
-          <summary data-i18n="group_summary">Parejas y sincronización (experimental)</summary>
-          <label><input id="stereo-pairs" type="checkbox" /><span data-i18n="stereo_pairs">Mostrar parejas configuradas en Apple Home</span></label>
-          <p class="hint" data-i18n="group_hint">Selecciona dos HomePods para probar un reloj y envío compartidos. Requiere PTP en la red. Si se pierde un miembro, se para todo el grupo.</p>
-          <div class="row"><select id="group-first" data-i18n-attr="aria-label:group_first"></select><select id="group-second" data-i18n-attr="aria-label:group_second"></select></div>
-          <button id="group-play" type="button" data-i18n="group_play">Probar reproducción sincronizada</button>
-          <span id="group-status" class="status" role="status"></span>
-        </details>
-        <div id="player" class="player" hidden>
-          <div class="player-row">
-            <button id="play-stop" class="play" data-i18n="play_generic">▶ Reproducir audio del PC</button>
-            <span id="player-status" class="status"></span>
+      </aside>
+      <main class="workspace">
+        <header class="workspace-header">
+          <p class="subtitle" data-i18n="subtitle">Envía el audio de Windows a tu HomePod</p>
+          <div class="operation-status"><span id="status" class="status" role="status" aria-live="polite"></span><button id="operation-cancel" type="button" hidden data-i18n="cancel">Cancelar</button></div>
+        </header>
+        <div class="workspace-columns">
+          <div class="view-container">
+            <section id="view-speakers" class="view" aria-labelledby="speakers-heading">
+              <div class="page-heading"><div><h2 id="speakers-heading" data-i18n="nav_speakers">Altavoces</h2><p data-i18n="speakers_intro">Elige dónde escuchar el audio de tu PC.</p></div><button id="scan" data-i18n="scan">Buscar dispositivos</button></div>
+              <ul id="devices" aria-labelledby="speakers-heading"></ul>
+              <div class="multi-control"><label for="multi-device"><input id="multi-device" type="checkbox" /><span data-i18n="multi_device">Reproducir en varios dispositivos</span></label><p class="hint" data-i18n="multi_device_hint">Experimental: al conectar otro receptor durante la reproducción, se añadirá al audio actual. Los receptores pueden no estar perfectamente sincronizados.</p></div>
+              <section class="settings-section speaker-settings" aria-labelledby="group-heading"><h3 id="group-heading" data-i18n="group_summary">Parejas y sincronización (experimental)</h3>
+                <label class="check-row"><input id="stereo-pairs" type="checkbox" /><span data-i18n="stereo_pairs">Mostrar parejas configuradas en Apple Home</span></label>
+                <p class="hint" data-i18n="group_hint">Selecciona dos HomePods para probar un reloj y envío compartidos. Requiere PTP en la red. Si se pierde un miembro, se para todo el grupo.</p>
+                <div class="row group-selectors"><select id="group-first" data-i18n-attr="aria-label:group_first"></select><select id="group-second" data-i18n-attr="aria-label:group_second"></select></div>
+                <button id="group-play" type="button" data-i18n="group_play">Probar reproducción sincronizada</button><span id="group-status" class="status" role="status"></span>
+              </section>
+              <section class="settings-section speaker-settings" aria-labelledby="manual-heading"><h3 id="manual-heading" data-i18n="manual_heading">Añadir un altavoz manualmente</h3>
+                <p class="hint" data-i18n="manual_hint">Algunos routers no propagan mDNS. Mira la IP del HomePod en la app Casa.</p>
+                <div class="manual-fields"><input id="manual-ip" placeholder="192.168.1.50[:7000]" data-i18n-attr="placeholder:manual_endpoint_placeholder,aria-label:manual_endpoint_placeholder" /><input id="manual-name" placeholder="Nombre (opcional)" data-i18n-attr="placeholder:manual_name_placeholder,aria-label:manual_name_placeholder" /><button id="manual-add" data-i18n="manual_add">Añadir</button></div>
+                <span id="manual-status" class="status" role="status"></span>
+              </section>
+            </section>
+            <section id="view-audio" class="view" hidden aria-labelledby="audio-heading">
+              <div class="page-heading"><div><h2 id="audio-heading" data-i18n="nav_audio">Audio</h2><p data-i18n="audio_intro">Configura la fuente y el búfer de reproducción.</p></div></div>
+              <section class="settings-section" aria-labelledby="source-heading">
+                <h3 id="source-heading" data-i18n="audio_source">Fuente de audio de Windows</h3>
+                <div class="source-controls"><label class="sr-only" for="audio-source" data-i18n="audio_source">Fuente de audio de Windows</label><select id="audio-source"><option value="" data-i18n="audio_default">Salida predeterminada</option></select><button id="audio-refresh" class="secondary" type="button" data-i18n="refresh">Actualizar</button></div>
+                <p class="hint" data-i18n="audio_source_hint">Captura las aplicaciones que reproducen en esa salida. No redirige las aplicaciones a otro dispositivo.</p>
+                <label class="check-row"><input id="mute-local" type="checkbox" /><span data-i18n="mute_local">Silenciar salida local (experimental)</span></label><p class="hint" data-i18n="mute_hint">Se prueba mientras llega audio. Si el silencio corta la captura, se restaura la salida. Se restaura también al parar.</p><span id="audio-options-status" class="status" role="status"></span>
+              </section>
+              <p id="receiver-settings-empty" class="empty-note" data-i18n="receiver_settings_empty">Conecta un altavoz para ajustar su búfer.</p>
+              <section id="receiver-settings" class="settings-section" hidden aria-labelledby="buffer-heading">
+                <h3 id="buffer-heading" data-i18n="buffer_heading">Búfer de reproducción</h3>
+                <div class="latency-control"><label class="latency-label" for="latency"><span data-i18n="latency">Límite del búfer AirPlay</span><output id="latency-out" for="latency">3000 ms</output></label><input id="latency" type="range" min="0" max="3000" step="100" value="3000" /><div class="latency-scale"><span data-i18n="latency_lower">Menos retardo</span><span data-i18n="latency_safer">Más estabilidad</span></div><p class="hint" data-i18n="latency_hint">Confirma el cambio para aplicarlo. Los valores bajos pueden causar cortes.</p><div class="latency-actions"><button id="latency-confirm" type="button" data-i18n="latency_confirm">Confirmar</button><span id="latency-status" class="status" role="status" aria-live="polite"></span></div></div>
+                <div class="buffer-option"><label class="check-row" for="experimental-local-buffer"><input id="experimental-local-buffer" type="checkbox" /><span data-i18n="local_buffer">Búfer local reducido (experimental)</span></label><p class="hint" data-i18n="local_buffer_hint">Puede reducir el retardo, pero también causar cortes. Para cambiarlo, para la reproducción.</p></div>
+              </section>
+            </section>
+            <section id="view-diagnostics" class="view" hidden aria-labelledby="diagnostics-heading">
+              <div class="page-heading"><div><h2 id="diagnostics-heading" data-i18n="nav_diagnostics">Diagnóstico</h2></div></div>
+              <section class="settings-section"><h3 data-i18n="diagnostics_summary">Diagnóstico de audio</h3><p class="hint" data-i18n="diagnostics_hint">Descarga las métricas de las últimas sesiones para comparar retardo y cortes. No incluye nombres, direcciones IP ni credenciales. Las medidas locales no representan el retardo audible del HomePod.</p><button id="diagnostics-export" type="button" data-i18n="diagnostics_export">Descargar diagnóstico</button><p id="diagnostics-status" class="status" role="status" aria-live="polite"></p></section>
+            </section>
           </div>
-          <label class="vol">
-            <span data-i18n="volume">Volumen</span>
-            <input id="volume" type="range" min="0" max="100" value="20" />
-            <output id="vol-out">20%</output>
-          </label>
-          <div class="multi-control">
-            <label for="experimental-local-buffer">
-              <input id="experimental-local-buffer" type="checkbox" />
-              <span data-i18n="local_buffer">Búfer local reducido (experimental)</span>
-            </label>
-            <p class="hint" data-i18n="local_buffer_hint">Puede reducir el retardo, pero también causar cortes. Para cambiarlo, para la reproducción. El HomePod puede añadir su propio retardo.</p>
-          </div>
-          <label><input id="auto-reconnect" type="checkbox" /><span data-i18n="auto_reconnect">Reconectar si falla este receptor</span></label>
-          <div id="receiver-volumes"></div>
-          <div class="latency-control">
-            <label class="latency-label" for="latency">
-              <span data-i18n="latency">Límite del búfer AirPlay</span>
-              <output id="latency-out" for="latency">3000 ms</output>
-            </label>
-            <input id="latency" type="range" min="0" max="3000" step="100" value="3000" />
-            <div class="latency-scale">
-              <span data-i18n="latency_lower">Menos retardo</span>
-              <span data-i18n="latency_safer">Más estabilidad</span>
+          <aside class="playback-panel" aria-labelledby="playback-heading">
+            <h2 id="playback-heading" data-i18n="playback_heading">Salida actual</h2>
+            <p id="player-empty" class="empty-note" data-i18n="player_empty">Elige un altavoz para empezar.</p>
+            <div id="player" class="player" hidden>
+              <h3 id="current-receiver"></h3>
+              <div class="player-row"><button id="play-stop" class="play" data-i18n="play_generic">▶ Reproducir audio del PC</button><span id="player-status" class="status" role="status" aria-live="polite"></span></div>
+              <label class="vol"><span data-i18n="volume">Volumen</span><input id="volume" type="range" min="0" max="100" value="20" /><output id="vol-out">20%</output></label>
+              <label class="check-row reconnect-option"><input id="auto-reconnect" type="checkbox" /><span data-i18n="auto_reconnect">Reconectar si falla este receptor</span></label>
+              <div id="receiver-volumes"></div>
             </div>
-            <p class="hint" data-i18n="latency_hint">
-              Confirma el cambio para aplicarlo. Solo puedes cambiarlo una vez cada 10 segundos. Si se está reproduciendo audio, la conexión se reinicia brevemente; los valores bajos pueden causar cortes.
-            </p>
-            <div class="latency-actions">
-              <button id="latency-confirm" type="button" data-i18n="latency_confirm">Confirmar</button>
-              <span id="latency-status" class="status" role="status" aria-live="polite"></span>
-            </div>
-          </div>
+          </aside>
         </div>
-        <details class="manual">
-          <summary data-i18n="diagnostics_summary">Diagnóstico de audio</summary>
-          <p class="hint" data-i18n="diagnostics_hint">Descarga las métricas de las últimas sesiones para comparar retardo y cortes. No incluye nombres, direcciones IP ni credenciales. Las medidas locales no representan el retardo audible del HomePod.</p>
-          <button id="diagnostics-export" type="button" data-i18n="diagnostics_export">Descargar diagnóstico</button>
-          <span id="diagnostics-status" class="status" role="status" aria-live="polite"></span>
-        </details>
-        <details class="manual">
-          <summary data-i18n="manual_summary">¿No aparece tu HomePod? Añade su IP manualmente</summary>
-          <p class="hint" data-i18n="manual_hint">
-            Algunos routers (Movistar HGU, redes con VLANs) no propagan mDNS entre
-            wifi 2.4 y 5 GHz. Mira la IP del HomePod en la app Casa del iPhone.
-          </p>
-          <div class="row">
-            <input
-              id="manual-ip"
-              placeholder="192.168.1.50[:7000]"
-              data-i18n-attr="placeholder:manual_endpoint_placeholder"
-            />
-            <input
-              id="manual-name"
-              placeholder="Nombre (opcional)"
-              data-i18n-attr="placeholder:manual_name_placeholder"
-            />
-            <button id="manual-add" data-i18n="manual_add">Añadir</button>
-          </div>
-          <span id="manual-status" class="status"></span>
-        </details>
-        <button id="check-updates" type="button" data-i18n="check_updates">Buscar actualizaciones</button>
-      </section>
-    </main>
-    <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
-      <h2 id="confirm-title"></h2>
-      <p id="confirm-message"></p>
-      <div class="dialog-actions">
-        <button id="confirm-cancel" type="button" class="secondary" data-i18n="cancel">Cancelar</button>
-        <button id="confirm-accept" type="button"></button>
-      </div>
-    </dialog>
+      </main>
+    </div>
+    <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message"><h2 id="confirm-title"></h2><p id="confirm-message"></p><div class="dialog-actions"><button id="confirm-cancel" type="button" class="secondary" data-i18n="cancel">Cancelar</button><button id="confirm-accept" type="button"></button></div></dialog>
     <div id="toast" class="toast" hidden></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

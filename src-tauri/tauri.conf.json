@@ -19,10 +19,12 @@
     "windows": [
       {
         "title": "AirSend",
-        "width": 420,
-        "height": 540,
+        "width": 1120,
+        "height": 760,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "minWidth": 880,
+        "minHeight": 620
       }
     ],
     "security": {

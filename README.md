@@ -59,6 +59,11 @@ The main goal of the project is to offer a free, open and auditable
 alternative for users who want to stream audio from Windows to
 AirPlay-compatible devices.
 
+## Desktop navigation
+
+A wider desktop layout separates Speakers, Audio and Diagnostics while keeping
+playback controls visible. See the [layout notes and anonymized screenshots](docs/desktop-navigation.md).
+
 ## Integrated improvements under validation
 
 The development integration fixes timing-worker CPU leaks and adds bounded audio diagnostics, optional reduced local buffers, receiver metadata preservation, Windows output selection and reversible local mute, cancellable sessions with optional recovery, per-receiver settings/volume and manual access to official updates.
