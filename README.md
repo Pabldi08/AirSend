@@ -62,8 +62,12 @@ AirPlay-compatible devices.
 ## HomePod OS 27 audio candidate
 
 Draft timing and capture changes are described in the
-[implementation and validation notes](docs/homepod-os27-contribution.md), including
-remaining negotiation, saved-setting migration and minimum-buffer review items.
+[implementation and validation notes](docs/homepod-os27-contribution.md).
+
+## Desktop navigation
+
+A wider desktop layout separates Speakers, Audio and Diagnostics while keeping
+playback controls visible. See the [layout notes and anonymized screenshots](docs/desktop-navigation.md).
 
 ## Integrated improvements under validation
 
