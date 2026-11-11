@@ -19,12 +19,10 @@
     "windows": [
       {
         "title": "AirSend",
-        "width": 1120,
-        "height": 760,
+        "width": 420,
+        "height": 540,
         "resizable": true,
-        "fullscreen": false,
-        "minWidth": 880,
-        "minHeight": 620
+        "fullscreen": false
       }
     ],
     "security": {
@@ -33,9 +31,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "nsis"
-    ],
+    "targets": ["nsis"],
     "category": "Utility",
     "shortDescription": "Stream Windows audio to HomePod",
     "longDescription": "Native Windows app that captures system audio via WASAPI and streams it to a HomePod via AirPlay 2.",

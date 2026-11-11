@@ -1,6 +1,6 @@
-# HomePod OS 27 audio and desktop UI contribution
+# HomePod OS 27 audio candidate (draft)
 
-This contribution follows the existing integration at `e93535b`. A HomePod
+This audio-only candidate follows the existing integration at `e93535b`. A HomePod
 running software 27.2 would connect but had excessive delay or crackling when
 lower buffers were requested with the previous timing path. In the tested
 Windows setup, automatic PTP timing and capture/timeline recovery allowed clean
@@ -12,7 +12,7 @@ guarantee. Results need validation on other receivers and networks.
 
 Upstream draft [PR #26](https://github.com/Pabldi08/AirSend/pull/26) already
 addresses HomePod OS 27 connection/timing and idle audio. This contribution
-overlaps those fixes and adds the tested desktop UI, WASAPI packet draining,
+overlaps those fixes and adds WASAPI packet draining,
 legacy timing override, timing diagnostics and further regression coverage.
 Its automatic PTP choice is narrower (supported HomePod models on OS 27+)
 than #26's feature-based selection for all PTP-capable receivers. The maintainer
@@ -53,32 +53,24 @@ The Unix socket-QoS guard and Windows sender priority support remain present.
 Vendoring makes the tested combination reproducible; maintainers may prefer to
 land those changes in their sender fork and restore a pinned Git dependency.
 
-## Desktop changes
+## Pending before audio review/merge
 
-The window opens at 1120 × 760, with an 880 × 620 minimum. A sidebar separates
-Speakers, Audio and Diagnostics. The playback panel stays visible while switching
-pages. Previously collapsed settings are directly accessible within their pages;
-English/Spanish labels, light/dark themes and stream-state locking are covered
-by the UI tests. The product identifier and upgrade identity are unchanged.
+The maintainer requested the following in PR #28. They remain open in this
+candidate; marking it draft does not mean these fixes are implemented:
 
-### Screenshots
+- Handle PTP negotiation failures explicitly. Do not leave a failed preparation
+  looking like successful streaming; agree the fallback/error policy with #26.
+- Preserve #27's migration for saved 0 ms global and per-receiver settings.
+- Keep the minimum requested receiver buffer at 100 ms until hardware results
+  support 50 ms. This candidate still retains zero and 50 ms requests, so it must
+  not ship unchanged.
+- Resolve the sender licensing discrepancy identified by the maintainer before
+  distributing an installer with the updated dependency. Exact source and
+  existing license files are preserved here; they are not a licensing conclusion.
 
-These are captures of the actual built frontend using its test-only native
-bridge. Receiver names are generic demo labels and addresses are documentation
-placeholders (`192.0.2.x`), replacing all personal device information before
-rendering. They are UI previews, not evidence of a live receiver connection.
-No real names, device identifiers, addresses, Windows account details or logs
-were used in these images.
-
-![Speakers page with anonymous demo receivers](screenshots/speakers-light.png)
-
-![Audio page with anonymous demo output, light theme](screenshots/audio-light.png)
-
-![Audio page with anonymous demo output, dark theme](screenshots/audio-dark.png)
-
-Reproduce with `npm --prefix ui ci`, `npm --prefix ui run build`,
-`npm exec --prefix ui -- playwright install chromium`, then
-`node ui/tests/screenshots.cjs`.
+Desktop navigation/layout and anonymized screenshots have been moved to a
+separate PR based directly on main. This candidate retains the original narrow
+layout and only adds the legacy-timing control needed by its audio preference.
 
 ## Validation
 
@@ -97,9 +89,12 @@ Listening tests on the HomePod 27.2 setup reported near sync with faint cracklin
 at 200 ms, then clean sound, acceptable sync and clean resume after pausing at
 250 ms, with reduced local buffers enabled. Volume/mute worked with the existing
 VB-CABLE route. No acoustic latency figure was established for the final profile.
-The screenshots are independent from those listening tests. The contribution
-branch reran all 33 application tests, 254 sender tests (two ignored), eight UI
-tests, the UI production build and Chromium smoke checks successfully on Linux.
+Those hardware checks used the earlier combined alpha.6 candidate, with the
+same audio backend and the wider layout. The separated audio branch reruns
+application Rust and frontend unit/build checks; it does not include the
+navigation smoke harness. The prior combined contribution passed all 33
+application tests, 254 sender tests (two ignored), eight UI tests, the frontend
+build and Chromium smoke checks on Linux.
 GitHub CI results should be consulted on the PR before merging.
 
 The optional `tools/audio-latency` microphone helper saves numerical results,
@@ -117,5 +112,5 @@ not recordings. Its README describes setup and measurement limitations.
   single-speaker playback.
 - Repository release versions are left unchanged for the maintainer to choose.
   Independent AAC/OpenAir research and local settings/logs are excluded.
-- The audio and UI portions can be split if that would make upstream review
-  easier. The vendored sender accounts for most of the added source lines.
+- Desktop navigation is submitted separately. The vendored sender accounts for
+  most of the added source lines in this audio candidate.

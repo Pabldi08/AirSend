@@ -59,12 +59,11 @@ The main goal of the project is to offer a free, open and auditable
 alternative for users who want to stream audio from Windows to
 AirPlay-compatible devices.
 
-## HomePod OS 27 compatibility and desktop layout
+## HomePod OS 27 audio candidate
 
-This contribution adds PTP timing for supported HomePods, recovery after capture
-gaps, Windows capture fixes, and a wider sidebar interface. See the
+Draft timing and capture changes are described in the
 [implementation and validation notes](docs/homepod-os27-contribution.md), including
-anonymized UI screenshots and the sender dependency provenance.
+remaining negotiation, saved-setting migration and minimum-buffer review items.
 
 ## Integrated improvements under validation
 

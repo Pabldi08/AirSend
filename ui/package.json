@@ -8,14 +8,12 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test:devices": "node src/devices.test.mjs",
-    "preview": "vite preview",
-    "test:ui": "node tests/smoke.cjs"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0"
   },
   "devDependencies": {
-    "playwright": "1.61.1",
     "typescript": "^5.4.0",
     "vite": "^5.2.0"
   }

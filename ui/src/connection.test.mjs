@@ -78,7 +78,7 @@ async function harness() {
     "@tauri-apps/api/event": { async listen(name, callback) {
       events.set(name, callback); return () => events.delete(name);
     } },
-    "./devices": devices, "./i18n": i18n, "./navigation": { initializeNavigation() {} },
+    "./devices": devices, "./i18n": i18n,
   }, {
     document, console, queueMicrotask,
     window: { setInterval: () => 0, setTimeout: () => 0 },

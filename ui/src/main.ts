@@ -1,4 +1,3 @@
-import { initializeNavigation } from "./navigation";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { groupDevices, routesFor, type Device, type DeviceKind } from "./devices";
@@ -9,8 +8,6 @@ import {
   t,
   toggleLang,
 } from "./i18n";
-
-initializeNavigation(document);
 
 const KIND_LABEL: Record<DeviceKind, string> = {
   homepod: "HomePod",
@@ -308,10 +305,6 @@ let latencyTimer: number | null = null;
 function updatePlayerUi() {
   const dev = connectedId ? known.get(connectedId) : null;
   playerEl.hidden = !dev;
-  document.getElementById("player-empty")!.hidden = Boolean(dev);
-  document.getElementById("receiver-settings")!.hidden = !dev;
-  document.getElementById("receiver-settings-empty")!.hidden = Boolean(dev);
-  document.getElementById("current-receiver")!.textContent = dev?.name ?? "";
   playBtn.disabled = stopping || ((latencyApplying || actionBusy) && !playing);
   cancelOperation.hidden = !actionBusy && !latencyApplying;
   audioSource.disabled = playing || actionBusy || latencyApplying;
