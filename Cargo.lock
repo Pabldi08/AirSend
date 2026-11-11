@@ -331,7 +331,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "audio-capture"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "cpal",
  "crossbeam-channel",
@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "audio-encode"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "thiserror 1.0.69",
  "tracing",
@@ -555,7 +555,7 @@ dependencies = [
 
 [[package]]
 name = "cap-core"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "airplay-audio",
  "airplay-client",
@@ -750,7 +750,7 @@ dependencies = [
 
 [[package]]
 name = "conexion-airplay"
-version = "0.1.7"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "audio-capture",
