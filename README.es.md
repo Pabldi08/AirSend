@@ -1,115 +1,54 @@
-# AirSend
+<h1 align="center">AirSend</h1>
+
+<p align="center">Envía el audio de tu PC con Windows a un HomePod por AirPlay 2.</p>
+
 <p align="center">
-  <a href="README.md">English</a> ·
-  <a href="README.es.md">Español</a>
+  <a href="https://github.com/Pabldi08/AirSend/releases/latest"><img src="https://img.shields.io/badge/Descargar-Windows%20x64-blue?style=for-the-badge" alt="Descargar AirSend para Windows x64"></a>
 </p>
 
+<p align="center"><a href="README.md">English</a> · <a href="README.es.md">Español</a></p>
 
-App de escritorio para Windows que captura el audio del sistema y lo envía a un HomePod por AirPlay 2 con latencia mínima.
+## Versión actual
 
-> ⚠️ **Estado**: pre-alfa.
+**AirSend 0.3.0** incluye la interfaz nativa WinUI y un instalador para Windows x64. AirSend es gratuito y de código abierto.
 
+1. Descarga y ejecuta el instalador **Setup-x64.exe** desde [GitHub Releases](https://github.com/Pabldi08/AirSend/releases/latest). Si AirSend está abierto, sal primero desde la bandeja.
+2. Abre AirSend, elige tu HomePod y pulsa **Enviar audio del PC**.
 
+## Qué puedes hacer
 
-## Instalación
+| Función | Cómo funciona |
+| --- | --- |
+| Audio del sistema o de una app | Envía toda la mezcla del sistema o elige una aplicación en Windows 11, como Chrome o Spotify. |
+| Detección de altavoces | Busca altavoces en la red local o introduce una dirección IP manualmente. |
+| Reproducción sincronizada | Usa una pareja estéreo o dos HomePods compatibles con un reloj PTP compartido. |
+| Controles de reproducción | Ajusta el volumen y solicita al altavoz un búfer de **100 a 3000 ms**. El retraso audible también depende del receptor y la red. |
+| Silencio local y espera | Silencia la reproducción local cuando sea compatible. Puedes liberar el altavoz tras un periodo de silencio y reanudar cuando quieras. |
+| Bandeja del sistema | Cierra la ventana para seguir escuchando, vuelve a abrirla desde la bandeja o detén la reproducción desde su menú. |
+| Diagnóstico | Consulta incidencias y retransmisiones, marca la distorsión audible y exporta un informe sin nombres de altavoces, direcciones de red ni credenciales. |
 
-Descarga la última versión estable en:
+La app de Windows usa **WinUI 3**, un motor en **Rust** y captura mediante **WASAPI**. Consulta la [guía de Windows](native/README.md) para compilar y probar con hardware.
 
-<a href="https://github.com/Pabldi08/AirSend/releases/latest">
-  <img src="https://img.shields.io/badge/Download-Latest%20Release-blue?style=for-the-badge" alt="Descargar última versión">
-</a>
+## Comparativa con TuneBlade y AirParrot
 
-> Aviso de SmartScreen: al no firmar con certificado EV de código (≈200 €/año), la primera ejecución mostrará un aviso. Workaround: "Más información" → "Ejecutar igualmente". Considerar firma EV en post-MVP.
+| Función | AirSend | TuneBlade | AirParrot 3 |
+| --- | --- | --- | --- |
+| Plataforma de envío | Windows x64 | Windows | Windows y macOS |
+| Fuente de audio | Todo el sistema o una aplicación en Windows 11 | Audio de todo el sistema | Audio del sistema, archivos multimedia y duplicación de una aplicación en Windows |
+| HomePod | Audio por AirPlay 2, con reloj PTP compartido para parejas compatibles | Compatibilidad por firmware sin verificar en esta comparativa | Audio para HomePod documentado en Windows y macOS |
+| Control del búfer | Búfer solicitado al receptor de 100 a 3000 ms | — | — |
+| Diagnóstico | Incidencias recientes, retransmisiones y marcas de distorsión exportables | — | — |
+| Duplicación de pantalla | Solo audio | Envío de audio | Duplicación de pantalla y de aplicaciones |
 
-## Comparativa con alternativas
+Los guiones indican funciones sin verificar para esta comparativa. Fuentes de referencia. [Documentación de la integración de TuneBlade](https://github.com/spycle/tuneblade/blob/main/README.md) · [Funciones de AirParrot 3](https://blog.airsquirrels.com/introducing-airparrot-3-the-most-powerful-screen-mirroring-and-media-streaming-software-yet) · [Notas de AirParrot para Windows](https://www.airsquirrels.com/airparrot/release-notes/win)
 
-Esta tabla resume las diferencias principales entre AirSend y algunas alternativas populares.
-AirSend prioriza ser gratuito, auditable y compatible con HomePod mediante AirPlay 2, aunque todavía es un proyecto joven y no pretende cubrir funciones como mirroring de pantalla. La reproducción en varios dispositivos es experimental y no sincroniza los relojes de los receptores.
+## Comunicar un fallo
 
-| Característica | AirSend | TuneBlade | AirParrot |
-|---|---|---|---|
-| Plataforma | Windows | Windows | Windows + macOS |
-| Licencia / precio | GPL-3.0-or-later, gratis | Freeware, closed-source | Comercial (~15 €) |
-| AirPlay 2 con HomePod | ✅ | ⚠️ Inestable / no pairea en muchos casos | ✅ |
-| Pair-setup transient + verify | ✅ | ❌, sólo AirPlay 1 fiable | ✅ |
-| Codec | ALAC + ChaCha20-Poly1305 | ALAC | ALAC |
-| Captura | WASAPI loopback, audio del sistema | WASAPI loopback | WASAPI loopback + cherry-pick de apps |
-| Tray + close-to-tray | ✅ | ✅ | ✅ |
-| Auto-reconnect al último device | ✅ | ✅ | ✅ |
-| IP manual si mDNS falla | ✅ | ❌ | ⚠️ Limitado |
-| Control del búfer AirPlay | Límite superior solicitado de 100–3000 ms; el receptor puede añadir retardo | Variable | Alta, desync ocasional |
-| Jitter Windows en release | ✅ MMCSS Pro Audio + HIGH_PRIORITY | ❌ | ✅ |
-| Desarrollo activo | ✅ | ❌, parado desde hace años | ✅ |
-| Código auditable | ✅ | ❌ | ❌ |
-| Probado en hardware | ⚠️ 1 setup (HomePod gen 2) | ✅ Años, mucho hw | ✅ Años, mucho hw |
-
-## Estado del proyecto
-
-AirSend está en una fase inicial de desarrollo. La versión actual ya permite enviar audio del sistema desde Windows a un HomePod mediante AirPlay 2, pero todavía no pretende sustituir completamente a soluciones comerciales más maduras.
-
-El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta y auditable para usuarios que quieran enviar audio desde Windows a dispositivos AirPlay compatibles.
-
-## Próxima prueba de búfer local y diagnósticos
-
-En la app nativa de Windows, **Audio → Avanzado → Silenciar salida local**
-silencia la salida seleccionada mientras el audio sigue sonando por AirPlay.
-AirSend restaura el sonido del PC al parar la reproducción o si el silencio
-interrumpe la captura.
-
-**Búfer local reducido** está desactivado por defecto. Detén la reproducción
-para cambiarlo. Los ajustes de retraso controlan por separado el búfer que
-se solicita al altavoz.
-
-El diagnóstico contiene métricas limitadas por sesión, sin nombres, IP ni
-credenciales. Los tiempos locales no miden el retraso audible del HomePod.
-El procedimiento de comparación está en `docs/phase-01-testing.md`. Estos
-cambios todavía no están en la release publicada 0.1.7.
-
-## Roadmap
-
-### Versión actual: 0.1.7
-
-- [x] Captura de audio del sistema con WASAPI loopback
-- [x] Envío AirPlay 2 (ALAC + ChaCha20-Poly1305 + RTSP/RTP)
-- [x] Pair-setup transient + pair-verify contra HomePod
-- [x] Heartbeat RTSP para mantener la sesión viva (~10 s sin él el HomePod la cierra)
-- [x] Descubrimiento mDNS con cache replay al re-escanear
-- [x] Añadir dispositivo por IP manual (redes con mDNS roto: Movistar HGU, VLANs)
-- [x] Reconexión automática al último dispositivo al arrancar
-- [x] Control de volumen persistente entre sesiones
-- [x] Control deslizante de latencia (límite de búfer solicitado de 100–3000 ms) con confirmación, espera de 10 segundos y ajuste persistente; los ajustes de 0 ms se migran a 100 ms
-- [x] Bandeja del sistema + cerrar al tray (la app sigue activa de fondo)
-- [x] Logs rotados por día + toast de errores en la UI
-- [x] Releases manuales mediante GitHub Releases
-- [x] Jitter Windows resuelto: `HIGH_PRIORITY_CLASS` + MMCSS "Pro Audio" + `THREAD_PRIORITY_TIME_CRITICAL`
-
-### Próximas mejoras
-
-- [ ] Release notes automáticas desde `git log` en el workflow
-- [ ] Tests unitarios en `crates/airplay-core` (probe parser, stream config builder, smoke del pump loop)
-- [ ] Probar en más hardware (HomePod gen 1, mini, Apple TV, AirPort Express)
-- [ ] Documentación técnica de AirPlay 2 y pairing en `/docs`
-- [ ] Cert EV de code signing para eliminar el aviso de SmartScreen (~200 €/año, decisión económica)
-
-### Futuro
-
-- [ ] Validar la reproducción experimental en varios receptores y añadir sincronización de relojes
-- [ ] Selección de audio por aplicación (WASAPI process-loopback, Win10 1903+)
-- [ ] PR upstream a `lmcgartland/airplay2-rs` con los dos patches Windows
-- [ ] Soporte estable para otros receptores AirPlay 2 (Apple TV, AirPort Express, altavoces de terceros)
-
-## Stack
-
-- **Rust** + **Tauri v2** (UI con webview nativo de Windows, sin Electron)
-- **mdns-sd** para descubrir dispositivos AirPlay en la red local
-- **WASAPI loopback** para capturar el audio del sistema (sólo Windows)
-- **ALAC** + **RTP cifrado** (ChaCha20-Poly1305) para enviar al HomePod
-- Instalador **NSIS** distribuido mediante **GitHub Releases**; las actualizaciones se instalan manualmente
+[Abre una issue en GitHub](https://github.com/Pabldi08/AirSend/issues/new) con tu versión de AirSend y Windows, el modelo y software del altavoz y los pasos para reproducir el fallo. Si oyes distorsión, pulsa **Marcar distorsión** en ese momento y adjunta el informe que puedes exportar desde **Diagnóstico**.
 
 ## Contribuir
 
-Las instrucciones de release y notas para mantenedores están en
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Consulta las notas para mantenedores en [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licencia
 
