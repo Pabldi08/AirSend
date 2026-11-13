@@ -83,15 +83,43 @@ async function previewUrl() {
   await idle.goto(url);
   await idle.locator('.device').first().waitFor();
   assert.equal(await idle.locator('#player-empty').isVisible(),true);
+  await idle.waitForFunction(()=>window.__mockCalls.some(x=>x.command==='set_tray_playback_state'&&!x.args.canStart&&!x.args.canStop));
   await idle.getByRole('navigation').getByRole('button',{name:'Audio',exact:true}).click();
   assert.equal(await idle.locator('#receiver-settings-empty').isVisible(),true);
   assert.equal(await idle.locator('#receiver-settings').isVisible(),false);
   await idle.getByRole('navigation').getByRole('button',{name:'Speakers',exact:true}).click();
+  await idle.locator('.device').filter({hasText:'Office'}).getByRole('button',{name:'Connect',exact:true}).click();
+  await idle.waitForFunction(()=>window.__mockCalls.filter(x=>x.command==='set_tray_playback_state').at(-1)?.args.canStart===true);
+  // Tray actions reuse the selected receiver and ignore duplicate start/stop
+  // events while an operation is pending, even with the window unfocused.
+  await page.bringToFront();
+  await idle.evaluate(()=>{
+    window.__mockEmit('airplay://tray-playback','start');
+    window.__mockEmit('airplay://tray-playback','start');
+  });
+  await idle.waitForFunction(()=>document.querySelector('#player-status').textContent==='playing');
+  await idle.waitForFunction(()=>window.__mockCalls.filter(x=>x.command==='set_tray_playback_state').at(-1)?.args.canStop===true);
+  assert.equal(await idle.evaluate(()=>window.__mockCalls.filter(x=>x.command==='start_streaming').length),1);
+  await idle.evaluate(()=>window.__mockEmit('airplay://tray-playback','start'));
+  assert.equal(await idle.evaluate(()=>window.__mockCalls.filter(x=>x.command==='start_streaming').length),1,'Starting from the tray must not restart active playback');
+  await idle.evaluate(()=>{
+    window.__mockEmit('airplay://tray-playback','stop');
+    window.__mockEmit('airplay://tray-playback','stop');
+  });
+  await idle.waitForFunction(()=>window.__mockCalls.filter(x=>x.command==='set_tray_playback_state').at(-1)?.args.canStart===true);
+  assert.equal(await idle.evaluate(()=>window.__mockCalls.filter(x=>x.command==='stop_streaming').length),1);
+  assert.equal(await idle.evaluate(()=>window.__mockCalls.filter(x=>x.command==='disconnect_device').length),1);
+  assert.equal(await idle.locator('#player-empty').isVisible(),false,'Stopping from the tray must retain the selected receiver');
+  await idle.evaluate(()=>window.__mockEmit('airplay://tray-playback','start'));
+  await idle.waitForFunction(()=>document.querySelector('#player-status').textContent==='playing');
+  const trayStarts=await idle.evaluate(()=>window.__mockCalls.filter(x=>x.command==='start_streaming').map(x=>x.args));
+  assert.equal(trayStarts.length,2);
+  assert.deepEqual(trayStarts[1],trayStarts[0],'Quick start must reuse the receiver, volume and latency');
   await idle.setViewportSize({width:600,height:760});
   assert.equal(await idle.locator('#lang-toggle').isVisible(),true);
   assert.equal(await idle.locator('#check-updates').isVisible(),true);
   assert.deepEqual(errors,[]);
   await writeFile(`${out}/layout-bounds.json`,JSON.stringify(boundary,null,2));
   await browser.close();
-  console.log('PASS: navigation preserves streaming; source locks, stop/source change, Spanish labels, desktop sizing, and light/dark renders.');
+  console.log('PASS: tray start/stop, duplicate actions, receiver/settings retention; navigation preserves streaming; source locks, stop/source change, Spanish labels, desktop sizing, and light/dark renders.');
 })().catch(e=>{console.error(e);process.exitCode=1}).finally(async()=>{await browser?.close();await new Promise(resolve=>server ? server.close(resolve) : resolve());});

@@ -300,9 +300,23 @@ let confirmedLatencyMs = 3000;
 let latencyApplying = false;
 let latencyCooldownUntil = 0;
 let latencyTimer: number | null = null;
+let lastTrayPlaybackState = "";
+
+function syncTrayPlaybackState(hasDevice: boolean) {
+  const canStart = hasDevice && !playing && !actionBusy && !latencyApplying && !stopping;
+  const canStop = (playing || actionBusy || latencyApplying) && !stopping;
+  const state = `${canStart}:${canStop}`;
+  if (state === lastTrayPlaybackState) return;
+  lastTrayPlaybackState = state;
+  void invoke("set_tray_playback_state", { canStart, canStop }).catch((err) => {
+    lastTrayPlaybackState = "";
+    console.error("Could not update tray playback controls", err);
+  });
+}
 
 function updatePlayerUi() {
   const dev = connectedId ? known.get(connectedId) : null;
+  syncTrayPlaybackState(Boolean(dev));
   playerEl.hidden = !dev;
   document.getElementById("player-empty")!.hidden = Boolean(dev);
   document.getElementById("receiver-settings")!.hidden = !dev;
@@ -330,11 +344,12 @@ function updatePlayerUi() {
 }
 
 async function startPlay() {
-  if (actionBusy || latencyApplying) return;
+  if (playing || actionBusy || latencyApplying || stopping) return;
   const dev = connectedId ? known.get(connectedId) : null;
   if (!dev) return;
   const intent = ++intentSequence;
   actionBusy = true;
+  updatePlayerUi();
   playBtn.disabled = true;
   cancelOperation.hidden = false;
   playerStatus.textContent = t("player_starting");
@@ -351,7 +366,9 @@ async function startPlay() {
     // Persistimos para auto-reconnect (C2) y carga rápida en futuros arranques.
     void invoke("save_volume", { volume: vol });
   } catch (err) {
+    if (intent !== intentSequence) return;
     playerStatus.textContent = t("error_prefix", { err: String(err) });
+    showToast(playerStatus.textContent);
   } finally {
     actionBusy = false;
     updatePlayerUi();
@@ -364,6 +381,7 @@ async function stopPlay() {
   ++intentSequence;
   stopping = true;
   actionBusy = true;
+  updatePlayerUi();
   playBtn.disabled = true;
   try {
     await invoke("stop_streaming");
@@ -650,6 +668,11 @@ setupLangToggle();
 queueMicrotask(() => void initialize());
 
 async function initialize() {
+  // Register before enabling tray controls or restoring the saved receiver.
+  await listen<"start" | "stop">("airplay://tray-playback", (event) => {
+    if (event.payload === "start") void startPlay();
+    else if (event.payload === "stop") void stopPlay();
+  });
   await Promise.all([preloadSavedVolume(), preloadSavedLatency(), preloadMultiDevice(), preloadLocalBuffer(), loadAudioOptions().catch(e => showToast(String(e)))]);
   await bootstrap();
 }

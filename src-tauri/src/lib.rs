@@ -18,7 +18,7 @@ use cap_core::{
     probe_airplay, Device, Discovery,
 };
 use tauri::menu::{MenuBuilder, MenuItem, MenuItemBuilder};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State, WindowEvent};
 use tauri_plugin_store::StoreExt;
 use tracing_subscriber::EnvFilter;
@@ -1725,30 +1725,94 @@ async fn confirm_latency(
 
 struct TrayItems {
     show: MenuItem<tauri::Wry>,
+    playback: MenuItem<tauri::Wry>,
+    playback_state: Mutex<TrayPlaybackState>,
     quit: MenuItem<tauri::Wry>,
 }
 
-fn tray_labels(lang: &str) -> Option<(&'static str, &'static str)> {
+struct TrayPlaybackState {
+    language: String,
+    can_stop: bool,
+}
+
+fn tray_labels(lang: &str) -> Option<(&'static str, &'static str, &'static str, &'static str)> {
     match lang {
-        "es" => Some(("Mostrar / ocultar ventana", "Salir")),
-        "en" => Some(("Show / hide window", "Quit")),
+        "es" => Some((
+            "Mostrar / ocultar ventana",
+            "Iniciar reproducción",
+            "Detener reproducción",
+            "Salir",
+        )),
+        "en" => Some((
+            "Show / hide window",
+            "Quick start playback",
+            "Stop playback",
+            "Quit",
+        )),
         _ => None,
     }
 }
 
 #[tauri::command]
 fn set_tray_language(lang: String, state: State<'_, TrayItems>) -> Result<(), String> {
-    let (show, quit) = tray_labels(&lang).ok_or_else(|| "unsupported language".to_string())?;
+    let (show, start, stop, quit) =
+        tray_labels(&lang).ok_or_else(|| "unsupported language".to_string())?;
+    let playback_label = {
+        let mut playback = state.playback_state.lock().map_err(|e| e.to_string())?;
+        playback.language = lang;
+        if playback.can_stop {
+            stop
+        } else {
+            start
+        }
+    };
     state.show.set_text(show).map_err(|e| e.to_string())?;
+    state
+        .playback
+        .set_text(playback_label)
+        .map_err(|e| e.to_string())?;
     state.quit.set_text(quit).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn set_tray_playback_state(
+    can_start: bool,
+    can_stop: bool,
+    state: State<'_, TrayItems>,
+) -> Result<(), String> {
+    let playback_label = {
+        let mut playback = state.playback_state.lock().map_err(|e| e.to_string())?;
+        let (_, start, stop, _) =
+            tray_labels(&playback.language).ok_or_else(|| "unsupported language".to_string())?;
+        playback.can_stop = can_stop;
+        if can_stop {
+            stop
+        } else {
+            start
+        }
+    };
+    state
+        .playback
+        .set_text(playback_label)
+        .map_err(|e| e.to_string())?;
+    state
+        .playback
+        .set_enabled(can_start || can_stop)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<TrayItems> {
     let show_item = MenuItemBuilder::with_id("show", "Mostrar / ocultar ventana").build(app)?;
+    let playback_item = MenuItemBuilder::with_id("playback", "Iniciar reproducción")
+        .enabled(false)
+        .build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Salir").build(app)?;
     let menu = MenuBuilder::new(app)
         .item(&show_item)
+        .separator()
+        .item(&playback_item)
         .separator()
         .item(&quit_item)
         .build()?;
@@ -1756,8 +1820,29 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<TrayItems> {
     let mut builder = TrayIconBuilder::with_id("main")
         .tooltip("AirSend")
         .menu(&menu)
+        .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => toggle_main_window(app),
+            "playback" => {
+                let state = app.state::<TrayItems>();
+                let action = match state.playback_state.lock() {
+                    Ok(playback) => {
+                        if playback.can_stop {
+                            "stop"
+                        } else {
+                            "start"
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "Could not read tray playback state");
+                        return;
+                    }
+                };
+                if let Err(error) = app.emit_to("main", "airplay://tray-playback", action) {
+                    tracing::warn!(%error, "Could not send tray playback action");
+                    show_main_window(app);
+                }
+            }
             "quit" => {
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
@@ -1769,12 +1854,15 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<TrayItems> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            // Click izquierdo en el icono = toggle ventana, comportamiento
-            // típico de apps de tray en Windows.
-            if let TrayIconEvent::Click { button, .. } = event {
-                if matches!(button, tauri::tray::MouseButton::Left) {
-                    toggle_main_window(tray.app_handle());
-                }
+            // Windows emits both press and release. Toggle only on release
+            // so one click cannot immediately reverse its own window change.
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                toggle_main_window(tray.app_handle());
             }
         });
     if let Some(icon) = app.default_window_icon() {
@@ -1784,19 +1872,30 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<TrayItems> {
 
     Ok(TrayItems {
         show: show_item,
+        playback: playback_item,
+        playback_state: Mutex::new(TrayPlaybackState {
+            language: "es".into(),
+            can_stop: false,
+        }),
         quit: quit_item,
     })
 }
 
 fn toggle_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
-        let visible = win.is_visible().unwrap_or(false);
-        if visible {
+        if win.is_visible().unwrap_or(false) && !win.is_minimized().unwrap_or(false) {
             let _ = win.hide();
         } else {
-            let _ = win.show();
-            let _ = win.set_focus();
+            show_main_window(app);
         }
+    }
+}
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
     }
 }
 
@@ -1928,6 +2027,7 @@ pub fn run() {
             get_latency_cooldown_ms,
             confirm_latency,
             set_tray_language,
+            set_tray_playback_state,
             get_experimental_local_buffer,
             save_experimental_local_buffer,
             export_audio_diagnostics,
