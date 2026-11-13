@@ -26,6 +26,8 @@ pub enum CaptureError {
     UnsupportedConfig { wanted: u32, channels: u16 },
     #[error("backend de captura: {0}")]
     Backend(String),
+    #[error("captura por aplicación: {0}")]
+    ProcessLoopback(String),
     #[error("backend no implementado en esta plataforma")]
     UnsupportedPlatform,
 }
@@ -82,6 +84,9 @@ pub trait Capture: Send + Sync {
     fn mute_status(&self) -> &'static str {
         "unavailable"
     }
+    fn source_waiting(&self) -> bool {
+        false
+    }
 }
 
 impl fmt::Debug for dyn Capture {
@@ -92,6 +97,8 @@ impl fmt::Debug for dyn Capture {
 
 #[cfg(windows)]
 mod endpoints;
+#[cfg(windows)]
+pub mod process_loopback;
 #[cfg(unix)]
 pub mod linux;
 #[cfg(unix)]

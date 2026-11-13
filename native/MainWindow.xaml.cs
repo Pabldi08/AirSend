@@ -223,6 +223,10 @@ public sealed partial class MainWindow : Window
         {
             Status.Text = L("El altavoz está en uso por otro dispositivo.", "The speaker is in use by another device.");
         }
+        catch (InvalidOperationException error) when (AppAudioError(error.Message) is not null)
+        {
+            Status.Text = AppAudioError(error.Message);
+        }
         catch (Exception error) { Status.Text = error.Message; }
         finally
         {
@@ -503,6 +507,7 @@ public sealed partial class MainWindow : Window
         ReceiverVolumes.Children.Clear();
         receiverVolumeSignature = null;
         SetMuteStatus("off");
+        SetAppCaptureWaiting(false);
         Status.Text = "";
     }
 
@@ -524,9 +529,10 @@ public sealed partial class MainWindow : Window
             Status.Text = L("El altavoz está en uso por otro dispositivo.", "The speaker is in use by another device.");
             return;
         }
-        catch (InvalidOperationException) when (!cancelRequested)
+        catch (InvalidOperationException error) when (!cancelRequested)
         {
-            Status.Text = L("No se pudo reanudar. Comprueba el altavoz y vuelve a intentarlo.", "Could not resume. Check the speaker and try again.");
+            Status.Text = AppAudioError(error.Message) ??
+                L("No se pudo reanudar. Comprueba el altavoz y vuelve a intentarlo.", "Could not resume. Check the speaker and try again.");
             return;
         }
         if (cancelRequested) return;

@@ -33,7 +33,7 @@ use crate::{Capture, CaptureError, CaptureFormat, CapturedFrame};
 /// receptor y "robotiza"). Antes 512 (~11 ms) y 1024 (~23 ms) antes aún; cada
 /// bajada recorta latencia de captura. Igualado con `READ_CHUNK_FRAMES` del
 /// backend `parec` para que el pipeline vea el mismo tamaño en ambos OS.
-const CHUNK_FRAMES: usize = 352;
+pub(crate) const CHUNK_FRAMES: usize = 352;
 
 /// Timeout del `wait_for_event` (ms) mientras hay audio real en curso.
 const EVENT_TIMEOUT_MS: u32 = 3_000;
@@ -55,7 +55,7 @@ const IDLE_WARN_INTERVAL: Duration = Duration::from_secs(10);
 
 const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(10);
 
-struct MmcssGuard(*mut std::ffi::c_void);
+pub(crate) struct MmcssGuard(*mut std::ffi::c_void);
 
 impl Drop for MmcssGuard {
     fn drop(&mut self) {
@@ -77,7 +77,7 @@ extern "system" {
     fn AvRevertMmThreadCharacteristics(handle: *mut std::ffi::c_void) -> i32;
 }
 
-fn register_mmcss() -> Option<MmcssGuard> {
+pub(crate) fn register_mmcss() -> Option<MmcssGuard> {
     const AVRT_PRIORITY_CRITICAL: i32 = 2;
     let task: Vec<u16> = "Pro Audio\0".encode_utf16().collect();
     let mut task_index = 0;

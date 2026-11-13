@@ -154,6 +154,7 @@
                             BorderThickness="1" CornerRadius="{ThemeResource ControlCornerRadius}" Padding="16">
                             <StackPanel Spacing="10">
                                 <TextBlock x:Name="CaptureSource" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                <ComboBox x:Name="AudioAppSource" HorizontalAlignment="Stretch" SelectionChanged="OnAudioAppSource" />
                                 <Grid ColumnSpacing="8">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
@@ -163,6 +164,7 @@
                                     <Button x:Name="RefreshAudio" Grid.Column="1" Click="OnRefreshAudio" />
                                 </Grid>
                                 <TextBlock x:Name="SourceHint" TextWrapping="Wrap" Opacity="0.75" />
+                                <TextBlock x:Name="AppSourceHint" TextWrapping="Wrap" Opacity="0.75" />
                             </StackPanel>
                         </Border>
                         <TextBlock x:Name="BufferTitle" Style="{StaticResource SubtitleTextBlockStyle}" />
@@ -318,6 +320,7 @@
                             <HyperlinkButton x:Name="OpenDiagnostics" Padding="0" Click="OnOpenDiagnostics" />
                         </StackPanel>
                         <TextBlock x:Name="Status" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" />
+                        <TextBlock x:Name="AppCaptureStatus" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" Visibility="Collapsed" />
                     </StackPanel>
                 </Border>
                 <Border x:Name="ToastHost" Grid.ColumnSpan="2" Canvas.ZIndex="10"

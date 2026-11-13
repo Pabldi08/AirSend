@@ -12,10 +12,10 @@ namespace AirSend;
 public sealed partial class MainWindow
 {
     private sealed record AudioOutput(string? Id, string Name);
-    private sealed record AudioOptions(string? device_id, bool mute_local, bool legacy_timing);
+    private sealed record AudioOptions(string? device_id, bool mute_local, bool legacy_timing, string? application_path);
     private sealed record StandbyOptions(bool enabled, int minutes, int threshold_dbfs);
 
-    private AudioOptions audioOptions = new(null, false, false);
+    private AudioOptions audioOptions = new(null, false, false, null);
     private StandbyOptions standbyOptions = new(false, 5, -65);
     private string? pendingResume;
     private Dictionary<string, (string Ip, int Port)>? standbyRoutes;
@@ -31,9 +31,8 @@ public sealed partial class MainWindow
     private void LocalizeAudio()
     {
         CaptureSource.Text = L("Fuente de audio de Windows", "Windows audio source");
+        LocalizeAppAudio();
         RefreshAudio.Content = L("Actualizar", "Refresh");
-        SourceHint.Text = L("Captura el audio que ya se reproduce en esta salida. Detén la reproducción para cambiarla.",
-            "Captures apps already playing on this output. Stop playback before changing it.");
         LegacyTimingLabel.Text = L("Usar temporización de audio antigua", "Use legacy audio timing");
         LegacyTimingDescription.Text = L("Pruébala si un altavoz no conecta. Solo afecta a la reproducción individual.",
             "Try this if a speaker cannot connect. Applies to single-speaker playback.");
@@ -61,7 +60,9 @@ public sealed partial class MainWindow
     private void UpdateAudioControls()
     {
         var idle = !busy && active.Count == 0 && !recovering && pendingResume is null;
-        AudioSource.IsEnabled = LegacyTiming.IsEnabled = MuteLocal.IsEnabled = ReducedBuffer.IsEnabled = idle;
+        AudioSource.IsEnabled = MuteLocal.IsEnabled = idle && audioOptions.application_path is null;
+        LegacyTiming.IsEnabled = ReducedBuffer.IsEnabled = idle;
+        AudioAppSource.IsEnabled = idle && (SupportsAppAudio || audioOptions.application_path is not null);
         RefreshAudio.IsEnabled = !busy;
         StereoPairs.IsEnabled = GroupFirst.IsEnabled = GroupSecond.IsEnabled = idle;
         GroupPlay.IsEnabled = idle && GroupChoice(GroupFirst) is Receiver a && GroupChoice(GroupSecond) is Receiver b && a.Id != b.Id;
@@ -89,7 +90,8 @@ public sealed partial class MainWindow
             latencyAvailableAt = Environment.TickCount64 + (long)(await NativeEngine.Invoke(new { command = "get_latency_cooldown_ms" })).GetUInt64();
             var value = await NativeEngine.Invoke(new { command = "get_audio_options" });
             audioOptions = new AudioOptions(value.GetProperty("device_id").GetString(),
-                value.GetProperty("mute_local").GetBoolean(), value.GetProperty("legacy_timing").GetBoolean());
+                value.GetProperty("mute_local").GetBoolean(), value.GetProperty("legacy_timing").GetBoolean(),
+                value.TryGetProperty("application_path", out var appPath) ? appPath.GetString() : null);
             LegacyTiming.IsOn = audioOptions.legacy_timing;
             MuteLocal.IsOn = audioOptions.mute_local;
             var standby = await NativeEngine.Invoke(new { command = "get_standby_options" });
@@ -102,6 +104,7 @@ public sealed partial class MainWindow
                 MuteStatus.Text = error.Message;
                 MuteStatus.Visibility = Visibility.Visible;
             }
+            await ReadAudioApps();
         }
         finally { applyingSettings = false; }
     }
@@ -133,7 +136,11 @@ public sealed partial class MainWindow
         finally { applyingSettings = wasApplying; }
     }
 
-    private async void OnRefreshAudio(object sender, RoutedEventArgs args) => await Run(ReadAudioOutputs);
+    private async void OnRefreshAudio(object sender, RoutedEventArgs args) => await Run(async () =>
+    {
+        await ReadAudioApps();
+        await ReadAudioOutputs();
+    });
 
     private async void OnAudioSource(object sender, SelectionChangedEventArgs args)
     {
@@ -150,7 +157,7 @@ public sealed partial class MainWindow
     private async Task SaveAudioOptions()
     {
         var options = new AudioOptions(((AudioSource.SelectedItem as ComboBoxItem)?.Tag as AudioOutput)?.Id,
-            MuteLocal.IsOn == true, LegacyTiming.IsOn == true);
+            MuteLocal.IsOn == true, LegacyTiming.IsOn == true, audioOptions.application_path);
         try
         {
             await NativeEngine.Invoke(new { command = "save_audio_options", options });
@@ -343,6 +350,7 @@ public sealed partial class MainWindow
         var status = await NativeEngine.Invoke(new { command = "get_session_status" });
         if (busy || quitting) return;
         SetMuteStatus(status.GetProperty("mute_status").GetString());
+        SetAppCaptureWaiting(status.TryGetProperty("source_waiting", out var waiting) && waiting.GetBoolean());
         var failure = await NativeEngine.Invoke(new { command = "take_error" });
         if (failure.ValueKind == JsonValueKind.Object &&
             failure.GetProperty("generation").GetUInt64() == status.GetProperty("generation").GetUInt64())

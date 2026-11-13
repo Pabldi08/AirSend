@@ -38,6 +38,8 @@ pub struct AudioOptions {
     pub device_id: Option<String>,
     pub mute_local: bool,
     pub legacy_timing: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -123,5 +125,6 @@ mod audio_compatibility_tests {
             serde_json::from_str(r#"{"device_id":"saved-output","mute_local":false}"#).unwrap();
         assert!(!options.legacy_timing);
         assert_eq!(options.device_id.as_deref(), Some("saved-output"));
+        assert!(options.application_path.is_none());
     }
 }

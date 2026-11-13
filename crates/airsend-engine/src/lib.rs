@@ -203,7 +203,8 @@ struct ActiveStream {
 
 impl ActiveStream {
     fn apply_mute(&self, app: &AppHandle) -> Result<(), String> {
-        if get_audio_options(app.clone())?.mute_local {
+        let options = get_audio_options(app.clone())?;
+        if options.mute_local && options.application_path.is_none() {
             let path = app.data_dir().join("local-mute-recovery.json");
             self._capture
                 .as_ref()
@@ -557,10 +558,10 @@ async fn prepare_stream(
     };
     let audio_options = get_audio_options(app.clone())?;
     let (capture, rx) = match tokio::task::spawn_blocking(move || {
-        audio_capture::start_loopback_with_device(
+        start_capture(
             CaptureFormat::AIRPLAY_DEFAULT,
             capture_policy,
-            audio_options.device_id,
+            audio_options,
         )
     })
     .await
@@ -570,7 +571,7 @@ async fn prepare_stream(
         Err(error) => {
             diagnostics.lock().unwrap().record_failure("capture_start");
             diagnostics.lock().unwrap().failed();
-            return Err(format!("captura: {error}"));
+            return Err(capture_error(error));
         }
     };
     diagnostics.lock().unwrap().capture_started(began.elapsed());
@@ -709,17 +710,17 @@ async fn prepare_synchronized_stream(
     };
     let began = Instant::now();
     let (capture, rx) = tokio::task::spawn_blocking(move || {
-        audio_capture::start_loopback_with_device(
+        start_capture(
             audio_capture::CaptureFormat::AIRPLAY_DEFAULT,
             capture_policy,
-            options.device_id,
+            options,
         )
     })
     .await
     .map_err(|e| e.to_string())?
     .map_err(|e| {
         diagnostics.lock().unwrap().record_failure("capture_start");
-        e.to_string()
+        capture_error(e)
     })?;
     diagnostics.lock().unwrap().capture_started(began.elapsed());
     let sender = prepared.sender.clone();
@@ -1391,6 +1392,34 @@ pub async fn list_audio_outputs() -> Result<Vec<audio_capture::AudioEndpoint>, S
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())
 }
+
+fn start_capture(
+    format: audio_capture::CaptureFormat,
+    policy: audio_capture::CapturePolicy,
+    options: AudioOptions,
+) -> Result<
+    (
+        Box<dyn audio_capture::Capture>,
+        audio_capture::CaptureReceiver,
+    ),
+    audio_capture::CaptureError,
+> {
+    #[cfg(windows)]
+    if let Some(path) = options.application_path {
+        return audio_capture::process_loopback::start(format, policy, path);
+    }
+    audio_capture::start_loopback_with_device(format, policy, options.device_id)
+}
+
+fn capture_error(error: audio_capture::CaptureError) -> String {
+    match &error {
+        audio_capture::CaptureError::Backend(code) if code == "selected_audio_app_unavailable" => {
+            code.clone()
+        }
+        audio_capture::CaptureError::ProcessLoopback(_) => "process_loopback_failed".into(),
+        _ => format!("captura: {error}"),
+    }
+}
 pub fn get_audio_options(app: AppHandle) -> Result<AudioOptions, String> {
     let store = app.store();
     store
@@ -1398,11 +1427,21 @@ pub fn get_audio_options(app: AppHandle) -> Result<AudioOptions, String> {
         .map(serde_json::from_value)
         .transpose()
         .map_err(|e| e.to_string())
-        .map(|v| v.unwrap_or_default())
+        .map(|v: Option<AudioOptions>| {
+            let mut options = v.unwrap_or_default();
+            if !app
+                .streaming()
+                .manual_resume
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                options.application_path = None;
+            }
+            options
+        })
 }
 pub async fn save_audio_options(
     app: AppHandle,
-    options: AudioOptions,
+    mut options: AudioOptions,
     state: &StreamingState,
 ) -> Result<(), String> {
     let _operation = state.operation.lock().await;
@@ -1410,6 +1449,15 @@ pub async fn save_audio_options(
         return Err("stop_before_source_change".into());
     }
     let store = app.store();
+    if !state
+        .manual_resume
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        options.application_path = store
+            .get("audio_options")
+            .and_then(|value| serde_json::from_value::<AudioOptions>(value).ok())
+            .and_then(|saved| saved.application_path);
+    }
     store.set(
         "audio_options",
         serde_json::to_value(options).map_err(|e| e.to_string())?,
@@ -1479,7 +1527,7 @@ pub async fn get_session_status(state: &StreamingState) -> Result<serde_json::Va
     let stream = state.inner.lock().await;
     Ok(match stream.as_ref() {
         Some(active) => {
-            serde_json::json!({ "generation": active.generation.load(std::sync::atomic::Ordering::SeqCst), "status": "streaming", "mute_status": active._capture.as_ref().map_or("off", |c| c.mute_status()), "group_mode": active.group_mode })
+            serde_json::json!({ "generation": active.generation.load(std::sync::atomic::Ordering::SeqCst), "status": "streaming", "mute_status": active._capture.as_ref().map_or("off", |c| c.mute_status()), "source_waiting": active._capture.as_ref().is_some_and(|c| c.source_waiting()), "group_mode": active.group_mode })
         }
         None => {
             let phase = state.phase.lock().unwrap();

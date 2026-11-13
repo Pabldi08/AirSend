@@ -151,6 +151,12 @@ async fn execute(host: &NativeHost, mut request: Map<String, Value>) -> Result<V
             .await?,
         ),
         "list_audio_outputs" => serialize(crate::list_audio_outputs().await?),
+        "list_audio_apps" => serialize(
+            tokio::task::spawn_blocking(audio_capture::process_loopback::list_apps)
+                .await
+                .map_err(|error| error.to_string())?
+                .map_err(|error| error.to_string())?,
+        ),
         "get_audio_options" => serialize(crate::get_audio_options(app.clone())?),
         "save_audio_options" => serialize(
             crate::save_audio_options(

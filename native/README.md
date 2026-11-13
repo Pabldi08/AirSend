@@ -39,6 +39,23 @@ AirPlay desde el iPhone y vuelve a reproducir audio en el PC. El iPhone debe
 seguir sonando hasta que decidas pulsar **Reanudar**. Comprueba que **Parar**
 cancela la espera y que al reiniciar WinUI el altavoz sigue en manos del iPhone.
 
+### Captura por aplicación
+
+En Windows 11, abre **Audio**, pon a sonar una aplicación y pulsa **Actualizar**.
+Elige la aplicación en **Audio que quieres enviar**. **Todo el sistema** vuelve a
+capturar la mezcla de la salida de Windows seleccionada. La selección de salida
+y el silencio local se aplican a esa mezcla.
+
+Con Spotify, Chrome o Edge y VLC o un reproductor local, selecciona cada uno
+por separado y confirma que solo ese programa se oye en el HomePod. Deja
+Discord sonando durante la prueba para comprobar que su audio queda fuera.
+En el navegador, prueba dos pestañas y varias ventanas. Cierra y vuelve a abrir
+la aplicación elegida mientras AirSend envía. Si la sesión sigue abierta,
+AirSend espera a que vuelva la misma aplicación. Si el temporizador ya liberó
+el altavoz, vuelve a ponerla a sonar y pulsa **Reanudar**. La selección se guarda
+por ruta del ejecutable, así que si una actualización cambia la ruta, vuelve
+a elegir la aplicación.
+
 ## Validación con HomePod
 
 - Busca receptores, conecta uno, inicia la reproducción y cambia el volumen.
