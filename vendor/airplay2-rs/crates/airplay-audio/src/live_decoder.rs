@@ -6,7 +6,7 @@
 
 use airplay_core::{AudioFormat, error::Result};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::decoder::DecodedFrame;
 
@@ -96,6 +96,10 @@ pub struct LiveDiagnosticsHandle {
 }
 impl LiveDiagnosticsHandle {
     pub fn snapshot(&self) -> crate::LiveDiagnosticsSnapshot { self.metrics.snapshot(self.queue.len()) }
+
+    pub fn snapshot_at(&self, at: Instant) -> crate::LiveDiagnosticsSnapshot {
+        self.metrics.snapshot_at(self.queue.len(), at)
+    }
 }
 
 enum LiveInput {

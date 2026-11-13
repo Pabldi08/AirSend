@@ -29,7 +29,7 @@ pub use live_decoder::{LiveAudioDecoder, LiveFrameSender, LivePcmFrame, LiveDiag
 pub use rtp::{RtpPacket, RtpSender, RtpReceiver, RtpHeader, RetransmitRequest, build_retransmit_response};
 pub use buffer::{AudioBuffer, AudioFrame};
 pub use streamer::AudioStreamer;
-pub use live_policy::{LiveStreamOptions, LiveDiagnostics, LiveDiagnosticsSnapshot};
+pub use live_policy::{LiveStreamOptions, LiveDiagnostics, LiveDiagnosticsSnapshot, PtpReferenceSnapshot};
 pub use traits::{AudioSource, EncoderTrait};
 
 mod live_timeline;

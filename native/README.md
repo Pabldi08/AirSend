@@ -59,3 +59,22 @@ restaura el sonido local al parar o si se interrumpe la captura.
 
 La edición Tauri sigue disponible para comparar y validar paridad durante la
 migración. El flujo de publicación existente aún empaqueta esa edición.
+
+### Medición de sincronía PTP y estéreo
+
+1. En WinUI, reproduce dos minutos con un HomePod que negocie PTP. Exporta el
+   informe desde **Diagnóstico** durante la reproducción. En la salida del JSON,
+   comprueba `timing_protocol` y que `ptp_reference.updates_applied` avance
+   entre dos informes. Si el receptor usa NTP, `ptp_reference` será nulo.
+2. Repite con un par estéreo creado en Casa y, en una prueba aparte, con dos
+   salidas independientes. En el modo de grupo, `transport_scope: "group"`
+   indica que las dos filas de salida comparten la misma referencia PTP y
+   línea RTP. Los cambios de offset miden la referencia que aplica el emisor.
+   `rtp_sync_scheduled` cuenta decisiones de programar sincronización y
+   `rtp_timeline_catchups` cuenta los saltos para recuperar tiempo de captura.
+3. Para medir el desfase acústico, usa dos micrófonos conectados a la misma
+   interfaz y colocados a la misma distancia de cada altavoz. Reproduce impulsos
+   de referencia en ambos canales y mide la diferencia L/R entre sus llegadas.
+   Anota la mediana y el p95 del desfase absoluto, la deriva en ms/min y los
+   cortes durante el arranque, la reproducción sostenida y la reconexión de
+   un miembro. Usa la misma colocación, volumen y búfer al comparar versiones.

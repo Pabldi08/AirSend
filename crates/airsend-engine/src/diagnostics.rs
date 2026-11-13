@@ -127,9 +127,16 @@ impl Record {
         }
     }
     fn snapshot(&self) -> serde_json::Value {
+        let at = self.ended.unwrap_or_else(Instant::now);
         let outputs: Vec<_> = self.outputs.iter().enumerate().map(|(index, output)| {
-            let s = output.sender.snapshot();
+            let s = output.sender.snapshot_at(at);
             let (timings, successes, failures) = output.metrics.snapshot();
+            let ptp_reference = (output.metrics.timing_protocol() == "ptp").then(|| serde_json::json!({
+                "updates_applied": s.ptp_reference.updates_applied,
+                "last_update_age_ms": s.ptp_reference.last_update_age_ms,
+                "last_offset_change_ms": s.ptp_reference.last_offset_change_ms,
+                "max_abs_offset_change_ms": s.ptp_reference.max_abs_offset_change_ms,
+            }));
             serde_json::json!({
                 "receiver": index + 1, "transport_scope": output.transport_scope, "timings": timings, "timing_protocol": output.metrics.timing_protocol(),
                 "feedback_successes": successes, "feedback_failures": failures,
@@ -138,6 +145,10 @@ impl Record {
                 "encoder_buffer_ms": s.encoder_buffer_ms, "encoder_underruns": s.underruns, "max_input_queue_age_ms": s.max_queue_age_us as f64 / 1000.0,
                 "capture_delivery_to_udp_p95_ms": s.capture_to_send_p95_us.map(|v| v as f64 / 1000.0),
                 "first_packet_age_ms": s.first_packet_age_us.map(|v| v as f64 / 1000.0),
+                "ptp_reference": ptp_reference,
+                "rtp_sync_scheduled": s.rtp_sync_scheduled,
+                "rtp_timeline_catchups": s.rtp_timeline_catchups,
+                "rtp_timeline_skipped_frames": s.rtp_timeline_skipped_frames,
             })
         }).collect();
         let timing = self
@@ -157,7 +168,7 @@ impl Record {
             })
             .unwrap_or("unknown");
         serde_json::json!({
-            "status": self.status, "last_failure_stage": self.last_failure_stage, "session_duration_ms": self.ended.unwrap_or_else(Instant::now).saturating_duration_since(self.began).as_millis() as u64,
+            "status": self.status, "last_failure_stage": self.last_failure_stage, "session_duration_ms": at.saturating_duration_since(self.began).as_millis() as u64,
             "audio_format": { "sample_rate": 44_100, "channels": 2, "sample_bits": 16, "codec": "alac", "timing": timing },
             "requested_receiver_latency_ms": self.requested_latency_ms, "local_buffer_policy": self.policy,
             "capture_start_ms": self.capture_start_ms, "capture": self.capture,

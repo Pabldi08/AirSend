@@ -1127,6 +1127,9 @@ async fn run_streamer(
             if let Some(rx) = guard.timing_rx.as_mut() {
                 if rx.has_changed().unwrap_or(false) {
                     let latest = *rx.borrow_and_update();
+                    if guard.use_ptp_sync {
+                        guard.metrics.observe_ptp_update(latest.offset_ns);
+                    }
                     guard.clock_offset = Some(latest);
                 }
             }
@@ -1286,6 +1289,7 @@ async fn run_streamer(
                     // the lost time instead; the timestamp jump forces a new sync.
                     let (timestamp, skipped) = guard.live_timeline.timestamp(frame.timestamp, Instant::now(), sample_rate);
                     if skipped > 0 {
+                        guard.metrics.observe_rtp_catchup(skipped);
                         tracing::info!(skipped_ms=skipped as f64 * 1000.0 / sample_rate as f64, "Live RTP timeline caught up after capture gap");
                     }
                     timestamp
@@ -1298,6 +1302,9 @@ async fn run_streamer(
                     || (guard.live_options.max_age.is_some() && guard.current_timestamp as u32 != rtp_ts)
                     || first_packet || last_sync_rtp == 0
                     || rtp_ts.wrapping_sub(last_sync_rtp) >= sample_rate;
+                if need_sync {
+                    guard.metrics.rtp_sync_scheduled.fetch_add(1, Ordering::Relaxed);
+                }
 
                 // Extract PTP sync mode state before borrowing rtp_sender
                 let use_ptp_sync = guard.use_ptp_sync;
@@ -1653,6 +1660,14 @@ mod group_live_regressions {
         streamer.set_rtp_senders(targets).await;
         streamer.set_ptp_sync_mode([9; 8]).await;
         streamer.start_live_with_options(decoder, crate::LiveStreamOptions::low_latency()).await.unwrap();
+        let anchors = sockets.each_ref().map(|socket| {
+            let mut packet = [0u8; 64];
+            let len = socket.recv(&mut packet).unwrap();
+            assert_eq!(packet[1] & 0x7f, 87, "PTP sync must precede audio");
+            packet[..len].to_vec()
+        });
+        assert_eq!(anchors[0], anchors[1], "both receivers must get the same PTP anchor");
+        assert!(producer.diagnostics().rtp_sync_scheduled >= 1);
         let mut previous_nonce = None;
         for _ in 0..5 {
             let mut a = [0u8; 4096]; let mut b = [0u8; 4096];
