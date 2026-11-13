@@ -51,10 +51,14 @@ El objetivo principal del proyecto es ofrecer una alternativa gratuita, abierta 
 
 ## Próxima prueba de búfer local y diagnósticos
 
-La rama de desarrollo añade **Búfer local reducido**, desactivado por defecto,
-y **Descargar diagnóstico**. Para cambiar la opción experimental, para la
-reproducción. El slider sigue controlando por separado el búfer solicitado
-al receptor.
+En la app nativa de Windows, **Audio → Avanzado → Silenciar salida local**
+silencia la salida seleccionada mientras el audio sigue sonando por AirPlay.
+AirSend restaura el sonido del PC al parar la reproducción o si el silencio
+interrumpe la captura.
+
+**Búfer local reducido** está desactivado por defecto. Detén la reproducción
+para cambiarlo. Los ajustes de retraso controlan por separado el búfer que
+se solicita al altavoz.
 
 El diagnóstico contiene métricas limitadas por sesión, sin nombres, IP ni
 credenciales. Los tiempos locales no miden el retraso audible del HomePod.

@@ -1,0 +1,338 @@
+<Window
+    x:Class="AirSend.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="AirSend">
+    <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.Resources>
+            <Style x:Key="ReceiverCardStyle" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}" />
+                <Setter Property="Padding" Value="12,8" />
+                <Setter Property="MinHeight" Value="58" />
+            </Style>
+            <Style x:Key="ConnectedReceiverCardStyle" TargetType="Border" BasedOn="{StaticResource ReceiverCardStyle}">
+                <Setter Property="BorderBrush" Value="{ThemeResource AccentFillColorDefaultBrush}" />
+            </Style>
+            <Style x:Key="ReceiverConnectStyle" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+                <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}" />
+            </Style>
+            <Style x:Key="ReceiverDisconnectStyle" TargetType="Button" BasedOn="{StaticResource RoundedButtonStyle}">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderBrush" Value="{ThemeResource ControlStrongStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+            </Style>
+            <Style x:Key="SendAudioStyle" TargetType="Button" BasedOn="{StaticResource RoundedButtonStyle}">
+                <Setter Property="Background" Value="#147D46" />
+                <Setter Property="Foreground" Value="White" />
+            </Style>
+            <Style x:Key="StopAudioStyle" TargetType="Button" BasedOn="{StaticResource RoundedButtonStyle}">
+                <Setter Property="Background" Value="#C42B3B" />
+                <Setter Property="Foreground" Value="White" />
+            </Style>
+        </Grid.Resources>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TitleBar x:Name="WindowTitleBar" Title="AirSend" Background="Transparent">
+            <TitleBar.IconSource>
+                <ImageIconSource ImageSource="ms-appx:///AirSend-title.png" />
+            </TitleBar.IconSource>
+        </TitleBar>
+        <NavigationView x:Name="Navigation" Grid.Row="1" PaneDisplayMode="Left" OpenPaneLength="188"
+            IsBackButtonVisible="Collapsed" IsSettingsVisible="False"
+            SelectionChanged="OnNavigate" ItemInvoked="OnNavigationItemInvoked">
+            <NavigationView.MenuItems>
+                <NavigationViewItem x:Name="SpeakersNav" Tag="speakers" Icon="Audio" IsSelected="True" />
+                <NavigationViewItem x:Name="AudioNav" Tag="audio" Icon="Volume" />
+                <NavigationViewItem x:Name="DiagnosticsNav" Tag="diagnostics" Icon="ReportHacked" />
+            </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="SettingsButton" Icon="Setting" SelectsOnInvoked="False">
+                    <FlyoutBase.AttachedFlyout>
+                        <Flyout Placement="RightEdgeAlignedBottom">
+                            <StackPanel Spacing="12" MinWidth="220">
+                                <ComboBox x:Name="ThemeChoice" HorizontalAlignment="Stretch" SelectionChanged="OnThemeChanged">
+                                    <ComboBoxItem x:Name="SystemThemeItem" Tag="system" />
+                                    <ComboBoxItem x:Name="LightThemeItem" Tag="light" />
+                                    <ComboBoxItem x:Name="DarkThemeItem" Tag="dark" />
+                                </ComboBox>
+                                <ComboBox x:Name="LanguageChoice" HorizontalAlignment="Stretch" SelectionChanged="OnLanguageChanged">
+                                    <ComboBoxItem Content="Español" Tag="es" />
+                                    <ComboBoxItem Content="English" Tag="en" />
+                                </ComboBox>
+                                <HyperlinkButton x:Name="Updates" Padding="0" NavigateUri="https://github.com/Pabldi08/AirSend/releases/latest" />
+                            </StackPanel>
+                        </Flyout>
+                    </FlyoutBase.AttachedFlyout>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
+            <Grid Padding="24" ColumnSpacing="20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="280" />
+                </Grid.ColumnDefinitions>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="SpeakersView" Spacing="16" Padding="0,0,18,12">
+                        <Grid>
+                            <TextBlock x:Name="SpeakersTitle" VerticalAlignment="Center" Style="{StaticResource TitleTextBlockStyle}" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Spacing="8">
+                                <ProgressRing x:Name="ScanProgress" Width="18" Height="18" Visibility="Collapsed" />
+                                <Button x:Name="Scan" Click="OnScan">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <SymbolIcon Symbol="Refresh" />
+                                        <TextBlock x:Name="ScanLabel" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+                        <StackPanel x:Name="Receivers" Spacing="8" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3">
+                                <TextBlock x:Name="MultipleLabel" FontWeight="SemiBold" TextWrapping="Wrap" />
+
+                                <TextBlock x:Name="MultipleDescription" TextWrapping="Wrap" Opacity="0.8" />
+                            </StackPanel>
+                            <ToggleSwitch x:Name="Multiple" Grid.Column="1" MinWidth="0" OnContent="" OffContent="" Toggled="OnMultiple" />
+                        </Grid>
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1" CornerRadius="{ThemeResource ControlCornerRadius}" Padding="16">
+                            <StackPanel Spacing="10">
+                                <TextBlock x:Name="GroupsTitle" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                <InfoBar x:Name="GroupEditingInfo" IsClosable="False" Severity="Informational">
+                                    <InfoBar.ActionButton>
+                                        <Button x:Name="StopAndEditGroups" Click="OnStopAndEdit" />
+                                    </InfoBar.ActionButton>
+                                </InfoBar>
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="3">
+                                        <TextBlock x:Name="StereoPairsLabel" FontWeight="SemiBold" TextWrapping="Wrap" />
+
+                                        <TextBlock x:Name="StereoPairsDescription" TextWrapping="Wrap" Opacity="0.8" />
+                                    </StackPanel>
+                                    <ToggleSwitch x:Name="StereoPairs" Grid.Column="1" MinWidth="0" OnContent="" OffContent="" Toggled="OnStereoPairs" />
+                                </Grid>
+                                <TextBlock x:Name="GroupHint" TextWrapping="Wrap" Opacity="0.75" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="GroupFirst" HorizontalAlignment="Stretch" SelectionChanged="OnGroupChoice" />
+                                    <ComboBox x:Name="GroupSecond" Grid.Column="1" HorizontalAlignment="Stretch" SelectionChanged="OnGroupChoice" />
+                                </Grid>
+                                <Button x:Name="GroupPlay" Click="OnGroupPlay" />
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1" CornerRadius="{ThemeResource ControlCornerRadius}" Padding="16">
+                            <StackPanel Spacing="8">
+                                <TextBlock x:Name="ManualTitle" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                <TextBox x:Name="Endpoint" PlaceholderText="192.168.1.50:7000" PlaceholderForeground="{ThemeResource TextFillColorSecondaryBrush}" TextChanged="OnEndpointChanged" />
+                                <TextBlock x:Name="EndpointError" Visibility="Collapsed" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                                <TextBox x:Name="ReceiverName" />
+                                <Button x:Name="AddManual" Click="OnAddManual" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+                <ScrollViewer x:Name="AudioView" Visibility="Collapsed">
+                    <StackPanel Spacing="16" Padding="0,0,18,12">
+                        <TextBlock x:Name="AudioTitle" Style="{StaticResource TitleTextBlockStyle}" />
+                        <InfoBar x:Name="EditingInfo" IsClosable="False" Severity="Informational">
+                            <InfoBar.ActionButton><Button x:Name="StopAndEdit" Click="OnStopAndEdit" /></InfoBar.ActionButton>
+                        </InfoBar>
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1" CornerRadius="{ThemeResource ControlCornerRadius}" Padding="16">
+                            <StackPanel Spacing="10">
+                                <TextBlock x:Name="CaptureSource" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="AudioSource" HorizontalAlignment="Stretch" SelectionChanged="OnAudioSource" />
+                                    <Button x:Name="RefreshAudio" Grid.Column="1" Click="OnRefreshAudio" />
+                                </Grid>
+                                <TextBlock x:Name="SourceHint" TextWrapping="Wrap" Opacity="0.75" />
+                            </StackPanel>
+                        </Border>
+                        <TextBlock x:Name="BufferTitle" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <StackPanel Spacing="0" Margin="8,0">
+                            <Slider x:Name="Buffer" Margin="0,4,0,0" Minimum="100" Maximum="3000" StepFrequency="50"
+                                    ValueChanged="OnBufferChanged" />
+                            <!-- The slider thumb is 18 DIPs wide in the Fluent template. -->
+                            <Grid Margin="9,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="9*" />
+                                    <ColumnDefinition Width="20*" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel HorizontalAlignment="Left" Spacing="3">
+                                    <Rectangle Width="1" Height="5" HorizontalAlignment="Left" Fill="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock Text="100 ms" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" HorizontalAlignment="Left" Spacing="3">
+                                    <Rectangle Width="1" Height="5" HorizontalAlignment="Left" Fill="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock Text="1000 ms" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" HorizontalAlignment="Right" Spacing="3">
+                                    <Rectangle Width="1" Height="5" HorizontalAlignment="Right" Fill="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock Text="3000 ms" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="ApplyBuffer" Click="OnApplyBuffer" IsEnabled="False"
+                                    Style="{StaticResource ReceiverConnectStyle}" />
+                            <ProgressRing x:Name="BufferProgress" Grid.Column="1" Width="18" Height="18" Visibility="Collapsed" />
+                            <TextBlock x:Name="BufferStatus" Grid.Column="2" VerticalAlignment="Center"
+                                       TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+                        </Grid>
+                        <TextBlock x:Name="BufferHint" TextWrapping="Wrap" Opacity="0.75" />
+                        <Expander x:Name="AdvancedAudio" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                            <StackPanel Spacing="16">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="3">
+                                        <TextBlock x:Name="LegacyTimingLabel" FontWeight="SemiBold" TextWrapping="Wrap" />
+
+                                        <TextBlock x:Name="LegacyTimingDescription" TextWrapping="Wrap" Opacity="0.8" />
+                                    </StackPanel>
+                                    <ToggleSwitch x:Name="LegacyTiming" Grid.Column="1" MinWidth="0" OnContent="" OffContent="" Toggled="OnAudioOption" />
+                                </Grid>
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="3">
+                                        <TextBlock x:Name="MuteLocalLabel" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="MuteLocalDescription" TextWrapping="Wrap" Opacity="0.8" />
+                                    </StackPanel>
+                                    <ToggleSwitch x:Name="MuteLocal" Grid.Column="1" MinWidth="0" OnContent="" OffContent="" Toggled="OnAudioOption" />
+                                </Grid>
+                                <TextBlock x:Name="MuteStatus" TextWrapping="Wrap" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="3">
+                                        <TextBlock x:Name="ReducedBufferLabel" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                        <TextBlock x:Name="ReducedBufferDescription" TextWrapping="Wrap" Opacity="0.8" />
+                                    </StackPanel>
+                                    <ToggleSwitch x:Name="ReducedBuffer" Grid.Column="1" MinWidth="0" OnContent="" OffContent="" Toggled="OnReducedBuffer" />
+                                </Grid>
+                            </StackPanel>
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
+                <ScrollViewer x:Name="DiagnosticsView" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Spacing="16" Padding="0,0,18,12">
+                        <TextBlock x:Name="DiagnosticsTitle" Style="{StaticResource TitleTextBlockStyle}" />
+                        <TextBlock x:Name="DiagnosticsDescription" TextWrapping="Wrap" />
+                        <Grid ColumnSpacing="10" RowSpacing="10">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource ReceiverCardStyle}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Name="RequestedBufferLabel" TextWrapping="Wrap" FontSize="12" />
+                                    <TextBlock x:Name="RequestedBufferValue" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Column="1" Style="{StaticResource ReceiverCardStyle}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Name="EncoderBufferLabel" TextWrapping="Wrap" FontSize="12" />
+                                    <TextBlock x:Name="EncoderBufferValue" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Row="1" Style="{StaticResource ReceiverCardStyle}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Name="SendDelayLabel" TextWrapping="Wrap" FontSize="12" />
+                                    <TextBlock x:Name="SendDelayValue" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource ReceiverCardStyle}">
+                                <StackPanel Spacing="4">
+                                    <TextBlock x:Name="SendIssuesLabel" TextWrapping="Wrap" FontSize="12" />
+                                    <TextBlock x:Name="SendIssuesValue" Style="{StaticResource SubtitleTextBlockStyle}" />
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                        <TextBlock x:Name="RecentErrors" TextWrapping="Wrap" />
+                        <Expander x:Name="DiagnosticPreview" HorizontalAlignment="Stretch">
+                            <TextBlock x:Name="PreviewText" TextWrapping="Wrap" />
+                        </Expander>
+                        <Button x:Name="ExportDiagnostics" Click="OnExportDiagnostics" />
+                    </StackPanel>
+                </ScrollViewer>
+                <Border Grid.Column="1" VerticalAlignment="Top" Padding="20"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="{ThemeResource ControlCornerRadius}">
+                    <StackPanel Spacing="18">
+                        <TextBlock x:Name="CurrentOutput" Opacity="0.75" />
+                        <TextBlock x:Name="OutputName" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" />
+                        <Button x:Name="Play" Click="OnPlay" HorizontalAlignment="Stretch" />
+                        <Button x:Name="CancelOperation" Visibility="Collapsed" Click="OnCancelOperation" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3">
+                                <TextBlock x:Name="AutoReconnectLabel" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                <TextBlock x:Name="AutoReconnectDescription" TextWrapping="Wrap" Opacity="0.8" />
+                            </StackPanel>
+                            <ToggleSwitch x:Name="AutoReconnect" Grid.Column="1" MinWidth="0" OnContent="" OffContent="" Toggled="OnAutoReconnect" />
+                        </Grid>
+                        <StackPanel Spacing="8">
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Slider x:Name="Volume" Minimum="0" Maximum="100" StepFrequency="1" ValueChanged="OnVolumeChanged" />
+                                <Button x:Name="MuteReceiver" Grid.Column="1" VerticalAlignment="Center" Click="OnMuteReceiver">
+                                    <Grid>
+                                        <SymbolIcon x:Name="VolumeIcon" Symbol="Volume" />
+                                        <SymbolIcon x:Name="MutedIcon" Symbol="Mute" Visibility="Collapsed"
+                                                    Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                    </Grid>
+                                </Button>
+                            </Grid>
+                            <StackPanel x:Name="ReceiverVolumes" Spacing="6" />
+                        </StackPanel>
+                        <Border x:Name="PlaybackChip" Visibility="Collapsed" CornerRadius="{ThemeResource ControlCornerRadius}" Padding="10,4" HorizontalAlignment="Left"
+                            Background="{ThemeResource AccentFillColorDefaultBrush}">
+                            <TextBlock x:Name="PlaybackState" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
+                        </Border>
+                        <StackPanel x:Name="ConnectionWarning" Visibility="Collapsed" Spacing="3">
+                            <Grid ColumnSpacing="8" AutomationProperties.LiveSetting="Polite">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <FontIcon Glyph="&#xE7BA;" FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                                <TextBlock x:Name="ConnectionHealth" Grid.Column="1" TextWrapping="Wrap"
+                                           Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                            </Grid>
+                            <HyperlinkButton x:Name="OpenDiagnostics" Padding="0" Click="OnOpenDiagnostics" />
+                        </StackPanel>
+                        <TextBlock x:Name="Status" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+                <Border x:Name="ToastHost" Grid.ColumnSpan="2" Canvas.ZIndex="10"
+                        Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                        Margin="16" MaxWidth="540" Padding="14,9" CornerRadius="{ThemeResource OverlayCornerRadius}"
+                        Background="{ThemeResource SolidBackgroundFillColorSecondaryBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <TextBlock x:Name="ToastMessage" VerticalAlignment="Center" TextWrapping="Wrap"
+                                   AutomationProperties.LiveSetting="Polite" />
+                        <Button x:Name="ToastAction" Grid.Column="1" Visibility="Collapsed" />
+                    </Grid>
+                </Border>
+            </Grid>
+        </NavigationView>
+    </Grid>
+</Window>

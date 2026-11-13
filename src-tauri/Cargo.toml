@@ -15,19 +15,15 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-shell = "2"
-tauri-plugin-store = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-appender = "0.2"
 anyhow = { workspace = true }
 
 cap-core = { path = "../crates/airplay-core" }
-audio-capture = { path = "../crates/audio-capture" }
+airsend-engine = { path = "../crates/airsend-engine" }
 audio-encode = { path = "../crates/audio-encode" }
-crossbeam-channel = "0.5"
 
 [features]
 default = ["custom-protocol"]
