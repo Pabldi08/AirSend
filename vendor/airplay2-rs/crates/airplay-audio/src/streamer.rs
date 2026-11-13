@@ -625,11 +625,13 @@ impl AudioStreamer {
     /// responses are per-device (encrypted with the correct device key).
     pub async fn handle_retransmit_for_target(&self, index: usize, request: &crate::rtp::RetransmitRequest) -> airplay_core::error::Result<u16> {
         let inner = self.inner.lock().await;
-        if let Some(sender) = inner.rtp_senders.get(index) {
-            sender.handle_retransmit(request)
-        } else {
-            Ok(0)
-        }
+        let result = inner.rtp_senders.get(index).map_or(Ok(0), |sender| sender.handle_retransmit(request));
+        let requested = u64::from(request.count);
+        let sent = u64::from(result.as_ref().copied().unwrap_or(0));
+        inner.metrics.retransmit_requested.fetch_add(requested, Ordering::Relaxed);
+        inner.metrics.retransmit_sent.fetch_add(sent, Ordering::Relaxed);
+        inner.metrics.retransmit_missed.fetch_add(requested.saturating_sub(sent), Ordering::Relaxed);
+        result
     }
 
     /// Get the total number of audio packets sent.

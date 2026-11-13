@@ -11,6 +11,23 @@ use std::time::Instant;
 
 pub type SessionRecord = Arc<Mutex<Record>>;
 
+#[derive(Clone, Copy, Default, serde::Serialize)]
+struct Counters {
+    underruns: u64,
+    discarded: u64,
+    udp_errors: u64,
+    retransmit_requested: u64,
+    retransmit_sent: u64,
+    retransmit_missed: u64,
+}
+
+#[derive(serde::Serialize)]
+struct Interval {
+    from_ms: u64,
+    to_ms: u64,
+    counts: Counters,
+}
+
 struct Output {
     sender: LiveDiagnosticsHandle,
     metrics: Arc<StreamMetrics>,
@@ -46,9 +63,47 @@ pub struct Record {
     rejected: u64,
     max_capture_gap_ms: f64,
     outputs: Vec<Output>,
+    intervals: VecDeque<Interval>,
+    previous: Counters,
+    sampled_ms: u64,
+    distortion_marks_ms: VecDeque<u64>,
 }
 
 impl Record {
+    fn sample(&mut self) {
+        let elapsed = self.began.elapsed().as_millis() as u64;
+        let mut total = Counters::default();
+        let mut group_seen = false;
+        for output in &self.outputs {
+            if output.transport_scope == "group" && std::mem::replace(&mut group_seen, true) {
+                continue;
+            }
+            let s = output.sender.snapshot();
+            total.underruns += s.underruns;
+            total.discarded += s.queue_drops + s.stale_drops;
+            total.udp_errors += s.send_errors;
+            total.retransmit_requested += s.retransmit_requested;
+            total.retransmit_sent += s.retransmit_sent;
+            total.retransmit_missed += s.retransmit_missed;
+        }
+        let previous = std::mem::replace(&mut self.previous, total);
+        if self.intervals.len() == 180 {
+            self.intervals.pop_front();
+        }
+        self.intervals.push_back(Interval {
+            from_ms: self.sampled_ms,
+            to_ms: elapsed,
+            counts: Counters {
+                underruns: total.underruns.saturating_sub(previous.underruns),
+                discarded: total.discarded.saturating_sub(previous.discarded),
+                udp_errors: total.udp_errors.saturating_sub(previous.udp_errors),
+                retransmit_requested: total.retransmit_requested.saturating_sub(previous.retransmit_requested),
+                retransmit_sent: total.retransmit_sent.saturating_sub(previous.retransmit_sent),
+                retransmit_missed: total.retransmit_missed.saturating_sub(previous.retransmit_missed),
+            },
+        });
+        self.sampled_ms = elapsed;
+    }
     pub fn add_output(&mut self, sender: LiveFrameSender, metrics: Arc<StreamMetrics>) {
         self.outputs.push(Output {
             sender: sender.diagnostics_handle(),
@@ -74,6 +129,7 @@ impl Record {
         gap: std::time::Duration,
     ) {
         self.capture = capture;
+        self.sample();
         self.forwarded = forwarded;
         self.rejected = rejected;
         self.max_capture_gap_ms = self.max_capture_gap_ms.max(gap.as_secs_f64() * 1000.0);
@@ -157,6 +213,9 @@ impl Record {
                 "rtp_timeline_catchups": s.rtp_timeline_catchups,
                 "rtp_timeline_skipped_frames": s.rtp_timeline_skipped_frames,
                 "sender_mmcss": s.sender_mmcss,
+                "retransmit_requested": s.retransmit_requested,
+                "retransmit_sent": s.retransmit_sent,
+                "retransmit_missed": s.retransmit_missed,
             })
         }).collect();
         let timing = self
@@ -182,6 +241,7 @@ impl Record {
             "capture_start_ms": self.capture_start_ms, "capture": self.capture,
             "blocks_forwarded": self.forwarded, "blocks_rejected": self.rejected,
             "max_capture_gap_ms": self.max_capture_gap_ms, "outputs": outputs,
+            "intervals": self.intervals, "distortion_marks_ms": self.distortion_marks_ms,
         })
     }
 }
@@ -192,6 +252,20 @@ pub struct DiagnosticState {
     reconnections: AtomicU64,
 }
 impl DiagnosticState {
+    pub fn mark_distortion(&self) -> Result<(), String> {
+        let sessions = self.sessions.lock().unwrap();
+        let mut record = sessions.iter().rev().find_map(|session| {
+            let record = session.lock().unwrap();
+            (record.status == "streaming").then_some(record)
+        }).ok_or("no_active_session")?;
+        record.sample();
+        let at = record.sampled_ms;
+        if record.distortion_marks_ms.len() == 60 {
+            record.distortion_marks_ms.pop_front();
+        }
+        record.distortion_marks_ms.push_back(at);
+        Ok(())
+    }
     pub fn record_reconnection(&self) {
         self.reconnections.fetch_add(1, Ordering::Relaxed);
     }
@@ -210,6 +284,10 @@ impl DiagnosticState {
             rejected: 0,
             max_capture_gap_ms: 0.0,
             outputs: Vec::new(),
+            intervals: VecDeque::new(),
+            previous: Counters::default(),
+            sampled_ms: 0,
+            distortion_marks_ms: VecDeque::new(),
         }));
         let mut sessions = self.sessions.lock().unwrap();
         if sessions.len() == 6 {

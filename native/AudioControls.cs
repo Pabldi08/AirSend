@@ -60,7 +60,8 @@ public sealed partial class MainWindow
     private void UpdateAudioControls()
     {
         var idle = !busy && active.Count == 0 && !recovering && pendingResume is null;
-        AudioSource.IsEnabled = MuteLocal.IsEnabled = idle && audioOptions.application_path is null;
+        AudioSource.IsEnabled = idle && audioOptions.application_path is null;
+        MuteLocal.IsEnabled = idle;
         LegacyTiming.IsEnabled = ReducedBuffer.IsEnabled = idle;
         AudioAppSource.IsEnabled = idle && (SupportsAppAudio || audioOptions.application_path is not null);
         RefreshAudio.IsEnabled = !busy;

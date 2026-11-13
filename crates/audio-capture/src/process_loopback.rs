@@ -5,7 +5,7 @@ use std::{
     path::Path,
     ptr,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         mpsc, Arc,
     },
     thread,
@@ -104,6 +104,13 @@ impl Process {
 
 fn active_pids() -> WinResult<HashSet<u32>> {
     let mut pids = HashSet::new();
+    visit_active_sessions(|pid, _| {
+        pids.insert(pid);
+    })?;
+    Ok(pids)
+}
+
+fn visit_active_sessions(mut visit: impl FnMut(u32, IAudioSessionControl2)) -> WinResult<()> {
     unsafe {
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
@@ -136,12 +143,50 @@ fn active_pids() -> WinResult<HashSet<u32>> {
                 let mut pid = 0;
                 let status = (session.vtable().GetProcessId)(session.as_raw(), &mut pid);
                 if status == HRESULT(0) && pid != 0 && pid != std::process::id() {
-                    pids.insert(pid);
+                    visit(pid, session);
                 }
             }
         }
     }
-    Ok(pids)
+    Ok(())
+}
+
+struct MutedSession {
+    volume: ISimpleAudioVolume,
+    process: Process,
+}
+
+impl Drop for MutedSession {
+    fn drop(&mut self) {
+        unsafe {
+            if self.volume.GetMute().is_ok_and(|mute| mute.as_bool()) {
+                let _ = self.volume.SetMute(false, ptr::null());
+            }
+        }
+    }
+}
+
+fn mute_app_sessions(path: &str) -> Vec<MutedSession> {
+    let identity = path.to_lowercase();
+    let mut muted = Vec::new();
+    let _ = visit_active_sessions(|pid, session| {
+        let Some(process) = Process::open(pid) else {
+            return;
+        };
+        if process.path.to_lowercase() != identity {
+            return;
+        }
+        if let Ok(volume) = session.cast::<ISimpleAudioVolume>() {
+            unsafe {
+                if volume.GetMute().is_ok_and(|mute| !mute.as_bool())
+                    && volume.SetMute(true, ptr::null()).is_ok()
+                {
+                    muted.push(MutedSession { volume, process });
+                }
+            }
+        }
+    });
+    muted
 }
 
 pub fn list_apps() -> Result<Vec<AudioApp>, CaptureError> {
@@ -417,6 +462,7 @@ impl Drop for Input {
 struct AppCapture {
     running: Arc<AtomicBool>,
     waiting: Arc<AtomicBool>,
+    mute: Arc<AtomicU8>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -426,7 +472,19 @@ impl Capture for AppCapture {
     }
     fn stop(self: Box<Self>) {}
     fn mute_status(&self) -> &'static str {
-        "off"
+        match self.mute.load(Ordering::Relaxed) {
+            1 => "waiting_signal",
+            2 => "checking",
+            3 => "muted",
+            4 => "unsupported",
+            _ => "off",
+        }
+    }
+    fn request_local_mute(&self, _: std::path::PathBuf) -> Result<(), CaptureError> {
+        let _ = self
+            .mute
+            .compare_exchange(0, 1, Ordering::Relaxed, Ordering::Relaxed);
+        Ok(())
     }
     fn source_waiting(&self) -> bool {
         self.waiting.load(Ordering::Relaxed)
@@ -458,13 +516,21 @@ pub fn start(
     let waiting = Arc::new(AtomicBool::new(false));
     let worker_running = running.clone();
     let worker_waiting = waiting.clone();
+    let mute = Arc::new(AtomicU8::new(0));
+    let worker_mute = mute.clone();
     let (init, ready) = mpsc::sync_channel(1);
     let thread = thread::Builder::new()
         .name("wasapi-process-loopback".into())
         .spawn(move || {
-            if let Err(error) =
-                capture_app(fmt, &path, sender, &worker_running, &worker_waiting, &init)
-            {
+            if let Err(error) = capture_app(
+                fmt,
+                &path,
+                sender,
+                &worker_running,
+                &worker_waiting,
+                &worker_mute,
+                &init,
+            ) {
                 tracing::warn!("WASAPI process capture ended");
                 let _ = init.try_send(Err(error));
             }
@@ -475,6 +541,7 @@ pub fn start(
             Box::new(AppCapture {
                 running,
                 waiting,
+                mute,
                 thread: Some(thread),
             }),
             receiver,
@@ -498,6 +565,7 @@ fn capture_app(
     sender: CaptureSender,
     running: &AtomicBool,
     waiting: &AtomicBool,
+    mute: &AtomicU8,
     init: &mpsc::SyncSender<Result<(), String>>,
 ) -> Result<(), String> {
     let _com = ComGuard::new().map_err(|error| error.to_string())?;
@@ -516,9 +584,15 @@ fn capture_app(
     let mut next = Instant::now() + period * 2;
     let mut refresh = next + REFRESH;
     let mut mixed = vec![0i64; samples_per_chunk];
+    let mut muted_sessions = Vec::new();
+    let mut mute_started: Option<Instant> = None;
     while running.load(Ordering::Relaxed) {
         let now = Instant::now();
         if now >= refresh {
+            muted_sessions.retain(|session: &MutedSession| session.process.alive());
+            if muted_sessions.is_empty() && mute.load(Ordering::Relaxed) == 3 {
+                mute.store(1, Ordering::Relaxed);
+            }
             let result = selected_roots(path)
                 .map_err(|error| error.to_string())
                 .and_then(|mut roots| {
@@ -558,7 +632,26 @@ fn capture_app(
             let samples = mixed
                 .iter()
                 .map(|&sample| sample.clamp(i16::MIN as i64, i16::MAX as i64) as i16)
-                .collect();
+                .collect::<Vec<_>>();
+            let signal = samples.iter().any(|sample| sample.unsigned_abs() > 64);
+            if let Some(started) = mute_started {
+                if started.elapsed() >= Duration::from_millis(200) && signal {
+                    mute.store(3, Ordering::Relaxed);
+                    mute_started = None;
+                } else if started.elapsed() >= Duration::from_millis(800) {
+                    muted_sessions.clear();
+                    mute.store(4, Ordering::Relaxed);
+                    mute_started = None;
+                }
+            } else if signal && mute.load(Ordering::Relaxed) == 1 {
+                muted_sessions = mute_app_sessions(path);
+                if muted_sessions.is_empty() {
+                    mute.store(4, Ordering::Relaxed);
+                } else {
+                    mute.store(2, Ordering::Relaxed);
+                    mute_started = Some(Instant::now());
+                }
+            }
             if matches!(
                 sender.try_send(CapturedFrame::new(samples, fmt.channels, fmt.sample_rate)),
                 Err(crossbeam_channel::TrySendError::Disconnected(_))

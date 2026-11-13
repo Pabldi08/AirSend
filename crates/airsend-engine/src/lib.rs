@@ -67,7 +67,7 @@ mod latency_tests {
         assert_eq!(decode_latency(&serde_json::json!(750)), Some(750));
         assert_eq!(decode_latency(&serde_json::json!(725)), None);
         assert_eq!(decode_latency(&serde_json::json!(0)), Some(100));
-        for invalid in [1, 50, 99, 3100, u64::MAX] {
+        for invalid in [1, 49, 99, 3100, u64::MAX] {
             assert_eq!(decode_latency(&serde_json::json!(invalid)), None);
         }
     }
@@ -204,7 +204,7 @@ struct ActiveStream {
 impl ActiveStream {
     fn apply_mute(&self, app: &AppHandle) -> Result<(), String> {
         let options = get_audio_options(app.clone())?;
-        if options.mute_local && options.application_path.is_none() {
+        if options.mute_local {
             let path = app.data_dir().join("local-mute-recovery.json");
             self._capture
                 .as_ref()
@@ -1693,8 +1693,8 @@ fn decode_latency(value: &serde_json::Value) -> Option<u32> {
     // Older releases accepted zero, which can leave HomePods silent.
     latency_ms
         .map(|ms| {
-            if ms == 0 {
-                cap_core::streaming::MIN_LATENCY_MS
+            if matches!(ms, 0 | 50) {
+                100
             } else {
                 ms
             }

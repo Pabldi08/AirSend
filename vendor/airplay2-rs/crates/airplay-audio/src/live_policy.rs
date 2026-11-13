@@ -63,6 +63,9 @@ impl LiveStreamOptions {
 
 #[derive(Debug, Clone, Default)]
 pub struct LiveDiagnosticsSnapshot {
+    pub retransmit_requested: u64,
+    pub retransmit_sent: u64,
+    pub retransmit_missed: u64,
     pub sender_mmcss: Option<&'static str>,
     pub queued_blocks: usize,
     pub queue_drops: u64,
@@ -123,6 +126,9 @@ impl PtpReference {
 /// Bounded measurements shared by capture input, encoder and UDP sender.
 #[derive(Default)]
 pub struct LiveDiagnostics {
+    pub(crate) retransmit_requested: AtomicU64,
+    pub(crate) retransmit_sent: AtomicU64,
+    pub(crate) retransmit_missed: AtomicU64,
     #[cfg(windows)]
     pub(crate) sender_mmcss: std::sync::atomic::AtomicU8,
     pub(crate) queue_drops: AtomicU64,
@@ -183,6 +189,9 @@ impl LiveDiagnostics {
         let mut ages: Vec<_> = self.ages.lock().unwrap().iter().copied().collect();
         ages.sort_unstable();
         LiveDiagnosticsSnapshot {
+            retransmit_requested: self.retransmit_requested.load(Ordering::Relaxed),
+            retransmit_sent: self.retransmit_sent.load(Ordering::Relaxed),
+            retransmit_missed: self.retransmit_missed.load(Ordering::Relaxed),
             #[cfg(windows)]
             sender_mmcss: match self.sender_mmcss.load(Ordering::Relaxed) {
                 1 => Some("audio"),

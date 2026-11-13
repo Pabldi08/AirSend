@@ -32,6 +32,7 @@ public sealed partial class MainWindow
         SettingsButton.Content = settingsLabel;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SettingsButton, settingsLabel);
         ThemeChoice.Header = L("Tema", "Theme");
+        ThemeChoice.SelectedIndex = -1;
         SystemThemeItem.Content = L("Del sistema", "System default");
         LightThemeItem.Content = L("Claro", "Light");
         DarkThemeItem.Content = L("Oscuro", "Dark");

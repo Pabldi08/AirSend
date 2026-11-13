@@ -23,6 +23,7 @@ public sealed partial class MainWindow
     private string? copiedReceiverId;
     private const int ConnectionWarningThreshold = 1;
     private long nextDiagnostics;
+    private JsonElement? diagnosticsSnapshot;
 
     private void InitializeExperience()
     {
@@ -60,7 +61,7 @@ public sealed partial class MainWindow
             "AirSend version, audio format, requested buffer, local send timings and error counts. The report omits names, addresses and credentials.");
         GroupEditingInfo.Message = EditingInfo.Message;
         StopAndEditGroups.Content = StopAndEdit.Content;
-        OpenDiagnostics.Content = L("Ver diagnóstico", "View diagnostics");
+        MarkDistortion.Content = L("Marcar distorsión", "Mark distortion");
         RequestedBufferLabel.Text = L("Búfer solicitado", "Requested buffer");
         EncoderBufferLabel.Text = L("Búfer del codificador", "Encoder buffer");
         SendDelayLabel.Text = L("Retardo de envío habitual", "Typical send delay");
@@ -72,20 +73,24 @@ public sealed partial class MainWindow
         ToolTipService.SetToolTip(ConnectionHealth, L("Esta sesión registró bloques descartados, fallos de envío o falta de audio a tiempo.",
             "This session recorded dropped blocks, send failures or audio arriving too late."));
         nextDiagnostics = 0;
+        if (diagnosticsSnapshot is { } snapshot) RenderDiagnostics(snapshot);
     }
 
     private void RefreshExperience()
     {
         var playing = active.Count > 0 || recovering;
+        MarkDistortion.IsEnabled = active.Count > 0 && !busy && !recovering && pendingResume is null;
+        if (!playing) DistortionStatus.Visibility = Visibility.Collapsed;
         EditingInfo.IsOpen = playing;
         GroupEditingInfo.IsOpen = playing;
         StopAndEdit.IsEnabled = StopAndEditGroups.IsEnabled = !busy;
         Buffer.IsEnabled = !busy;
         UpdateBufferAction();
-        PlaybackChip.Visibility = playing || pendingResume is not null ? Visibility.Visible : Visibility.Collapsed;
+        PlaybackChip.Visibility = recovering || updatingBuffer || pendingResume is not null
+            ? Visibility.Visible : Visibility.Collapsed;
         PlaybackState.Text = pendingResume is not null ? L("En espera", "On standby") : recovering || updatingBuffer
             ? L("Reconectando…", "Reconnecting…")
-            : L("Reproduciendo", "Playing");
+            : "";
         if (!playing || recovering) ConnectionWarning.Visibility = Visibility.Collapsed;
         var muted = Volume.Value == 0;
         VolumeIcon.Visibility = muted ? Visibility.Collapsed : Visibility.Visible;
@@ -249,7 +254,14 @@ public sealed partial class MainWindow
         if (button.Content is SymbolIcon symbol) symbol.Symbol = Symbol.Accept;
     }
 
-    private void OnOpenDiagnostics(object sender, RoutedEventArgs args) => Navigation.SelectedItem = DiagnosticsNav;
+    private async void OnMarkDistortion(object sender, RoutedEventArgs args) => await Run(async () =>
+    {
+        await NativeEngine.Invoke(new { command = "mark_distortion" });
+        DistortionStatus.Text = L("Distorsión marcada en el informe.", "Distortion marked in the report.");
+        DistortionStatus.Visibility = Visibility.Visible;
+        nextDiagnostics = 0;
+        await RefreshDiagnostics();
+    });
 
     private async Task RefreshDiagnostics()
     {
@@ -258,16 +270,35 @@ public sealed partial class MainWindow
         nextDiagnostics = Environment.TickCount64 + 3000;
         var data = await NativeEngine.Invoke(new { command = "export_audio_diagnostics" });
         using var document = JsonDocument.Parse(data.GetString()!);
-        var sessions = document.RootElement.GetProperty("sessions").EnumerateArray().ToArray();
+        var snapshot = document.RootElement.Clone();
+        diagnosticsSnapshot = snapshot;
+        RenderDiagnostics(snapshot);
+    }
+
+    private void RenderDiagnostics(JsonElement snapshot)
+    {
+        var sessions = snapshot.GetProperty("sessions").EnumerateArray().ToArray();
         if (sessions.Length == 0)
         {
             TransportDetails.Text = "";
+            RecentIntervals.Text = "";
             RequestedBufferValue.Text = EncoderBufferValue.Text = SendDelayValue.Text = SendIssuesValue.Text = "—";
             RecentErrors.Text = L("Sin errores recientes", "No recent errors");
             ConnectionWarning.Visibility = Visibility.Collapsed;
             return;
         }
         var latest = sessions[^1];
+        var elapsed = latest.GetProperty("session_duration_ms").GetUInt64();
+        var intervals = latest.GetProperty("intervals").EnumerateArray()
+            .Where(i => elapsed - Math.Min(elapsed, i.GetProperty("to_ms").GetUInt64()) <= 30_000)
+            .Select(i => i.GetProperty("counts")).ToArray();
+        var recentUnderruns = intervals.Sum(c => c.GetProperty("underruns").GetInt64());
+        var recentDiscarded = intervals.Sum(c => c.GetProperty("discarded").GetInt64());
+        var recentUdp = intervals.Sum(c => c.GetProperty("udp_errors").GetInt64());
+        var recentMissed = intervals.Sum(c => c.GetProperty("retransmit_missed").GetInt64());
+        RecentIntervals.Text = L(
+            $"Últimos 30 s · Cola vacía: {recentUnderruns} · Descartes: {recentDiscarded} · Fallos UDP: {recentUdp} · Paquetes sin reenviar: {recentMissed}",
+            $"Last 30 s · Empty buffer: {recentUnderruns} · Drops: {recentDiscarded} · UDP errors: {recentUdp} · Packets not resent: {recentMissed}");
         var outputs = latest.GetProperty("outputs").EnumerateArray().ToArray();
         var delay = outputs.Select(o => o.GetProperty("capture_delivery_to_udp_p95_ms"))
             .Where(v => v.ValueKind == JsonValueKind.Number).Select(v => v.GetDouble()).DefaultIfEmpty(-1).Max();
@@ -277,10 +308,14 @@ public sealed partial class MainWindow
         var discarded = transports.Sum(o => o.GetProperty("input_queue_drops").GetInt64() + o.GetProperty("stale_drops").GetInt64());
         var underruns = transports.Sum(o => o.GetProperty("encoder_underruns").GetInt64());
         var losses = sendErrors + discarded + underruns;
-        var reconnections = document.RootElement.GetProperty("reconnections").GetUInt64();
+        var reconnections = snapshot.GetProperty("reconnections").GetUInt64();
+        var requestedAgain = transports.Sum(o => o.GetProperty("retransmit_requested").GetInt64());
+        var resent = transports.Sum(o => o.GetProperty("retransmit_sent").GetInt64());
         TransportDetails.Text = L(
             $"Cola vacía: {underruns} · Bloques descartados: {discarded} · Fallos UDP: {sendErrors}\nReconexiones desde que abriste AirSend: {reconnections}",
-            $"Empty buffer: {underruns} · Discarded blocks: {discarded} · UDP errors: {sendErrors}\nReconnections since opening AirSend: {reconnections}");
+            $"Empty buffer: {underruns} · Discarded blocks: {discarded} · UDP errors: {sendErrors}\nReconnections since opening AirSend: {reconnections}")
+            + "\n" + L($"Paquetes solicitados de nuevo: {requestedAgain} · Reenviados: {resent}",
+                $"Packets requested again: {requestedAgain} · Resent: {resent}");
         var errors = sessions.Reverse().Select(s => s.GetProperty("last_failure_stage").GetString())
             .Where(code => !string.IsNullOrWhiteSpace(code)).Take(3).Select(DescribeSessionError).ToArray();
         var requested = latest.GetProperty("requested_receiver_latency_ms").GetUInt32();
@@ -292,12 +327,11 @@ public sealed partial class MainWindow
         RecentErrors.Text = errors.Length == 0 ? L("Sin errores recientes", "No recent errors")
             : L("Últimos errores", "Recent errors") + "\n• " + string.Join("\n• ", errors);
 
-        var warn = active.Count > 0 && !recovering
-            && latest.GetProperty("status").GetString() == "streaming" && losses >= ConnectionWarningThreshold;
+        var recent = recentUnderruns + recentDiscarded + recentUdp + recentMissed;
+        var warn = latest.GetProperty("status").GetString() == "streaming" && recent >= ConnectionWarningThreshold;
         ConnectionWarning.Visibility = warn ? Visibility.Visible : Visibility.Collapsed;
         if (warn)
-            ConnectionHealth.Text = losses == 1 ? L("Conexión inestable · 1 incidencia", "Unstable connection · 1 issue")
-                : L($"Conexión inestable · {losses} incidencias", $"Unstable connection · {losses} issues");
+            ConnectionHealth.Text = L($"Incidencias recientes de audio: {recent}", $"Recent audio issues: {recent}");
     }
 
     private string DescribeSessionError(string? code) => code switch

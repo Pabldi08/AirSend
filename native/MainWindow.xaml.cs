@@ -78,6 +78,7 @@ public sealed partial class MainWindow : Window
         tray = new TrayIcon(WinRT.Interop.WindowNative.GetWindowHandle(this),
             Path.Combine(AppContext.BaseDirectory, "AirSend.ico"),
             () => DispatcherQueue.TryEnqueue(ToggleWindow),
+            () => DispatcherQueue.TryEnqueue(async () => await Run(Stop)),
             () => DispatcherQueue.TryEnqueue(async () => await Quit()));
         AppWindow.Closing += async (_, args) =>
         {
@@ -129,6 +130,15 @@ public sealed partial class MainWindow : Window
 
     private void ToggleWindow()
     {
+        if (AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter presenter &&
+            presenter.State == Microsoft.UI.Windowing.OverlappedPresenterState.Minimized)
+        {
+            AppWindow.Show();
+            presenter.Restore();
+            Activate();
+            UpdateRefreshTimer();
+            return;
+        }
         if (AppWindow.IsVisible) HideToTray();
         else
         {
@@ -192,6 +202,7 @@ public sealed partial class MainWindow : Window
         RenderReceiverRows();
         tray.ShowLabel = L("Mostrar / ocultar ventana", "Show / hide window");
         tray.QuitLabel = L("Salir", "Quit");
+        tray.StopLabel = L("Parar reproducción", "Stop playback");
         UpdateControls();
     }
 
@@ -199,6 +210,7 @@ public sealed partial class MainWindow : Window
     {
         OutputName.Text = output?.Name ?? L("Ningún altavoz conectado", "No speaker connected");
         var canStop = active.Count != 0 || recovering || pendingResume is not null;
+        tray.CanStop = canStop && !busy;
         Play.Content = canStop ? L("Parar", "Stop") : L("Enviar audio del PC", "Send PC audio");
         Play.Style = (Style)Root.Resources[canStop ? "StopAudioStyle" : "SendAudioStyle"];
         Play.IsEnabled = !busy && (output is not null || canStop);

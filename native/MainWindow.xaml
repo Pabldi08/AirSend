@@ -277,6 +277,15 @@
                         </Grid>
                         <TextBlock x:Name="RecentErrors" TextWrapping="Wrap" />
                         <TextBlock x:Name="TransportDetails" TextWrapping="Wrap" />
+                        <StackPanel x:Name="ConnectionWarning" Visibility="Collapsed" Spacing="3">
+                            <Grid ColumnSpacing="8" AutomationProperties.LiveSetting="Polite">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <FontIcon Glyph="&#xE7BA;" FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                                <TextBlock x:Name="ConnectionHealth" Grid.Column="1" TextWrapping="Wrap"
+                                           Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                            </Grid>
+                        </StackPanel>
+                        <TextBlock x:Name="RecentIntervals" TextWrapping="Wrap" />
                         <Expander x:Name="DiagnosticPreview" HorizontalAlignment="Stretch">
                             <TextBlock x:Name="PreviewText" TextWrapping="Wrap" />
                         </Expander>
@@ -311,17 +320,14 @@
                             Background="{ThemeResource AccentFillColorDefaultBrush}">
                             <TextBlock x:Name="PlaybackState" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
                         </Border>
-                        <StackPanel x:Name="ConnectionWarning" Visibility="Collapsed" Spacing="3">
-                            <Grid ColumnSpacing="8" AutomationProperties.LiveSetting="Polite">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <FontIcon Glyph="&#xE7BA;" FontSize="16" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
-                                <TextBlock x:Name="ConnectionHealth" Grid.Column="1" TextWrapping="Wrap"
-                                           Foreground="{ThemeResource SystemFillColorCautionBrush}" />
-                            </Grid>
-                            <HyperlinkButton x:Name="OpenDiagnostics" Padding="0" Click="OnOpenDiagnostics" />
-                        </StackPanel>
+
                         <TextBlock x:Name="Status" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" />
                         <TextBlock x:Name="AppCaptureStatus" AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" Visibility="Collapsed" />
+                        <StackPanel HorizontalAlignment="Stretch" Spacing="6" Margin="0,-25,0,0">
+                            <Button x:Name="MarkDistortion" Click="OnMarkDistortion" HorizontalAlignment="Center" IsEnabled="False" />
+                            <TextBlock x:Name="DistortionStatus" TextAlignment="Center" TextWrapping="Wrap"
+                                       AutomationProperties.LiveSetting="Polite" Visibility="Collapsed" />
+                        </StackPanel>
                     </StackPanel>
                 </Border>
                 <Border x:Name="ToastHost" Grid.ColumnSpan="2" Canvas.ZIndex="10"

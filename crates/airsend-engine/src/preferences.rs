@@ -19,8 +19,8 @@ impl ReceiverPreferences {
     /// Migrate only persisted settings; fresh commands still reject zero.
     pub fn from_stored(value: serde_json::Value) -> Result<Self, String> {
         let mut preferences: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
-        if preferences.latency_ms == 0 {
-            preferences.latency_ms = cap_core::streaming::MIN_LATENCY_MS;
+        if matches!(preferences.latency_ms, 0 | 50) {
+            preferences.latency_ms = 100;
         }
         preferences.validate()?;
         Ok(preferences)
@@ -74,7 +74,7 @@ mod tests {
         assert_eq!(preferences.latency_ms, 100);
         assert_eq!(preferences.volume, 0.65);
         assert!(preferences.reconnect);
-        for invalid in [50, 99, 3100] {
+        for invalid in [49, 99, 3100] {
             assert!(
                 ReceiverPreferences::from_stored(serde_json::json!({"latency_ms": invalid}))
                     .is_err()

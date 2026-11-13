@@ -16,17 +16,21 @@ internal sealed class TrayIcon : IDisposable
     private readonly Subclass procedure;
     private readonly Action toggle;
     private readonly Action quit;
+    private readonly Action stop;
     private NotifyIconData data;
 
     internal string ShowLabel { get; set; } = "";
     internal string QuitLabel { get; set; } = "";
+    internal string StopLabel { get; set; } = "";
+    internal bool CanStop { get; set; }
     internal bool IsAvailable { get; private set; }
 
-    internal TrayIcon(IntPtr window, string iconPath, Action toggle, Action quit)
+    internal TrayIcon(IntPtr window, string iconPath, Action toggle, Action stop, Action quit)
     {
         this.window = window;
         this.toggle = toggle;
         this.quit = quit;
+        this.stop = stop;
         icon = LoadImage(IntPtr.Zero, iconPath, 1, 0, 0, 0x50);
         if (icon == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
         data = new NotifyIconData
@@ -79,6 +83,8 @@ internal sealed class TrayIcon : IDisposable
         {
             AppendMenu(menu, 0, 1, ShowLabel);
             AppendMenu(menu, 0x800, 0, null);
+            AppendMenu(menu, CanStop ? 0u : 1u, 3, StopLabel);
+            AppendMenu(menu, 0x800, 0, null);
             AppendMenu(menu, 0, 2, QuitLabel);
             GetCursorPos(out var point);
             SetForegroundWindow(window);
@@ -88,6 +94,7 @@ internal sealed class TrayIcon : IDisposable
         finally { DestroyMenu(menu); }
         if (selected == 1) toggle();
         if (selected == 2) quit();
+        if (selected == 3) stop();
     }
 
     public void Dispose()

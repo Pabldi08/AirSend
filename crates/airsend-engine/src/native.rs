@@ -205,6 +205,7 @@ async fn execute(host: &NativeHost, mut request: Map<String, Value>) -> Result<V
             )
             .await?,
         ),
+        "mark_distortion" => serialize(app.diagnostics().mark_distortion()?),
         "export_audio_diagnostics" => {
             serialize(crate::export_audio_diagnostics(app.diagnostics())?)
         }

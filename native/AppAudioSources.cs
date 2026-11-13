@@ -91,8 +91,8 @@ public sealed partial class MainWindow
                     "Play audio in an app and select Refresh to list it.");
         SourceHint.Text = audioOptions.application_path is null
             ? L("Elige la salida de Windows que quieres capturar.", "Choose the Windows output to capture.")
-            : L("Solo se envía el audio de la aplicación elegida. La salida y el silencio local se aplican a Todo el sistema.",
-                "Only the selected app's audio is sent. Output selection and local mute apply to Entire system.");
+            : L("Solo se envía el audio de la aplicación elegida. Silenciar salida local afecta solo a esa aplicación.",
+                "Only the selected app's audio is sent. Local mute applies only to that app.");
     }
 
     private void AddAudioApp(string? path, string name)
