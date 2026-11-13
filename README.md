@@ -73,7 +73,9 @@ playback controls visible. See the [layout notes and anonymized screenshots](doc
 
 The development integration fixes timing-worker CPU leaks and adds bounded audio diagnostics, optional reduced local buffers, receiver metadata preservation, Windows output selection and reversible local mute, cancellable sessions with optional recovery, per-receiver settings/volume and manual access to official updates.
 
-Configured stereo pairs and synchronized two-HomePod groups are experimental and opt-in. They share a live encoder and RTP timeline while preserving receiver encryption. Real stereo channels, drift, Windows mute behavior and third-party playback still require hardware validation. The existing stable buffer policy remains the default.
+In the native Windows app, **Audio → Advanced → Mute local output** silences the selected Windows output while AirPlay keeps playing. AirSend restores local sound when playback stops or if muting interrupts capture. **Reduced local buffer** is optional and can be changed while playback is stopped.
+
+Configured stereo pairs and synchronized two-HomePod groups are experimental and opt-in. They share a live encoder and RTP timeline while preserving receiver encryption. Real stereo channels, drift and third-party playback still require hardware validation. The existing stable buffer policy remains the default.
 
 See [the integration test guide](docs/integration-testing.md) and [the latency comparison](docs/phase-01-testing.md). CI produces an NSIS test installer and `SHA256SUMS`; diagnostics identify its commit without names, addresses or credentials. These changes are not included in the published 0.1.7 release.
 

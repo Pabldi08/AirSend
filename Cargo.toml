@@ -5,6 +5,7 @@ members = [
     "crates/airplay-core",  # paquete renombrado a `cap-core` (Conexión AirPlay)
     "crates/audio-capture",
     "crates/audio-encode",
+    "crates/airsend-engine",
     "src-tauri",
 ]
 
