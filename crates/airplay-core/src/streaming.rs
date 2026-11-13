@@ -96,6 +96,41 @@ pub enum StreamError {
 }
 
 impl StreamError {
+    pub fn failure_code(&self) -> &'static str {
+        use ap2rs_core::{Error, RtspError, StreamingError};
+        match self {
+            Self::RetryExhausted { last, .. } => last.failure_code(),
+            Self::Client {
+                source: Error::Streaming(StreamingError::PtpNegotiation),
+                ..
+            } => "ptp_negotiation",
+            Self::Client {
+                source: Error::Pairing(_) | Error::Crypto(_) | Error::MfiRequired,
+                ..
+            } => "authentication",
+            Self::Client {
+                source: Error::Rtsp(RtspError::UnexpectedStatus(401 | 403)),
+                ..
+            } => "authentication",
+            Self::Client {
+                source: Error::Rtsp(RtspError::ReceiverInUse),
+                ..
+            } => "receiver_in_use",
+            Self::Client {
+                source: Error::Timeout,
+                ..
+            } => "timeout",
+            Self::Client {
+                source: Error::Connection(_) | Error::Rtsp(RtspError::ConnectionRefused),
+                ..
+            } => "transport",
+            Self::Client { .. } => "protocol",
+            Self::Pairing(_) => "descriptor",
+            Self::Encoder(_) => "encoder",
+            Self::InvalidLatency(_) => "configuration",
+        }
+    }
+
     pub fn receiver_in_use(&self) -> bool {
         match self {
             Self::Client { source, .. } => matches!(
@@ -382,7 +417,8 @@ pub async fn prepare_live_stream_with_compatibility(
                 legacy_timing,
             )
         },
-        CONNECTION_RETRY_DELAY,
+        CONNECTION_RETRY_DELAY
+            + Duration::from_millis(u64::from(uuid::Uuid::new_v4().as_bytes()[0])),
     )
     .await;
     match result {
@@ -422,12 +458,16 @@ async fn prepare_live_stream_once(
     });
     let began = Instant::now();
     tracing::info!(ip = %descriptor.ip, "open_live_stream: conectando + pairing");
-    let mut connection = Connection::connect_with_pin(device, config, HOMEPOD_TRANSIENT_PIN)
-        .await
-        .map_err(|source| StreamError::Client {
-            stage: StreamStage::ConnectAndPair,
-            source,
-        })?;
+    let mut connection = tokio::time::timeout(
+        Duration::from_secs(15),
+        Connection::connect_with_pin(device, config, HOMEPOD_TRANSIENT_PIN),
+    )
+    .await
+    .unwrap_or(Err(ap2rs_core::Error::Timeout))
+    .map_err(|source| StreamError::Client {
+        stage: StreamStage::ConnectAndPair,
+        source,
+    })?;
 
     metrics.stage("connect_pair", began.elapsed());
     tracing::info!(%advertised_model, receiver_model = %connection.device().model,

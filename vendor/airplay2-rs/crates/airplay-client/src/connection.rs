@@ -226,6 +226,35 @@ pub struct Connection {
     stream_stats: Arc<crate::stats::StreamStats>,
 }
 
+async fn first_ptp_offset(offsets: &mut watch::Receiver<ClockOffset>) -> Result<ClockOffset> {
+    match tokio::time::timeout(std::time::Duration::from_secs(2), offsets.changed()).await {
+        Ok(Ok(())) => Ok(*offsets.borrow_and_update()),
+        _ => Err(airplay_core::error::StreamingError::PtpNegotiation.into()),
+    }
+}
+
+#[cfg(test)]
+mod ptp_negotiation_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_published_zero_offset_is_valid() {
+        let (sender, mut offsets) = watch::channel(ClockOffset::default());
+        sender.send(ClockOffset::default()).unwrap();
+        assert_eq!(first_ptp_offset(&mut offsets).await.unwrap().offset_ns, 0);
+    }
+
+    #[tokio::test]
+    async fn a_closed_channel_does_not_use_the_default_offset() {
+        let (sender, mut offsets) = watch::channel(ClockOffset::default());
+        drop(sender);
+        assert!(matches!(
+            first_ptp_offset(&mut offsets).await,
+            Err(airplay_core::Error::Streaming(airplay_core::StreamingError::PtpNegotiation))
+        ));
+    }
+}
+
 impl Drop for Connection {
     fn drop(&mut self) {
         self.streamer = None;
@@ -289,6 +318,8 @@ impl Connection {
         let m1 = pairing.start_transient_pairing_with_pin(pin)?;
         let pair_setup_req = RtspRequest::pair_setup(m1, &client_device_id, 4);
         let m2_resp = rtsp.send(pair_setup_req).await?;
+        m2_resp.check_receiver_in_use()?;
+        m2_resp.ensure_success()?;
 
         let m2_body = m2_resp.body.as_deref().unwrap_or(&[]);
         let m3 = pairing.continue_transient_pairing(m2_body)?;
@@ -296,6 +327,8 @@ impl Connection {
         if let Some(m3_data) = m3 {
             let pair_setup_req = RtspRequest::pair_setup(m3_data, &client_device_id, 4);
             let m4_resp = rtsp.send(pair_setup_req).await?;
+            m4_resp.check_receiver_in_use()?;
+            m4_resp.ensure_success()?;
             let m4_body = m4_resp.body.as_deref().unwrap_or(&[]);
             pairing.continue_transient_pairing(m4_body)?;
         }
@@ -315,9 +348,6 @@ impl Connection {
                     info!("OPTIONS supported methods: {}", public);
                 } else {
                     info!("OPTIONS returned {} (no Public header)", resp.status_code);
-                    for (k, v) in &resp.headers {
-                        debug!("  OPTIONS header: {}: {}", k, v);
-                    }
                 }
             }
             Err(err) => {
@@ -841,9 +871,6 @@ impl Connection {
             setup2_resp.body.as_ref().map(|b| b.len()).unwrap_or(0),
             setup2_resp.body.is_some()
         );
-        if let Some(ref body) = setup2_resp.body {
-            tracing::debug!("SETUP phase2 response body (hex, first 100 bytes): {:02x?}", &body[..body.len().min(100)]);
-        }
         self.session.process_setup_phase2_response(setup2_resp.body.as_deref().unwrap_or(&[]))?;
 
         // RECORD — sent after both SETUP phases so the receiver has streams configured
@@ -927,17 +954,10 @@ impl Connection {
                                 self.ptp_master_clock_id = Some(clock_id);
                                 tracing::info!("BMCA complete: HomePod clock ID = {:02x?}", clock_id);
                             }
-                            Ok(Err(_)) => {
-                                tracing::warn!("BMCA: clock ID channel closed unexpectedly");
-                            }
-                            Err(_) => {
-                                tracing::warn!("BMCA: timeout waiting for clock ID (5s)");
-                            }
+                            _ => return Err(airplay_core::error::StreamingError::PtpNegotiation.into()),
                         }
 
-                        // Wait briefly for initial offset calculation
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        let initial_offset = *offset_rx.borrow_and_update();
+                        let initial_offset = first_ptp_offset(&mut offset_rx).await?;
                         self.timing_offset = Some(initial_offset);
 
                         tracing::info!("gPTP BMCA initialized (offset: {} ns, clock_id: {:02x?})",
@@ -968,11 +988,7 @@ impl Connection {
 
                         self.timing_task = Some(ptp_task);
 
-                        // Wait a moment for initial sync before proceeding
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-                        // Get the current offset from the channel
-                        let initial_offset = *offset_rx.borrow_and_update();
+                        let initial_offset = first_ptp_offset(&mut offset_rx).await?;
                         self.timing_offset = Some(initial_offset);
 
                         tracing::info!("PTP slave initialized (initial offset: {} ns)", initial_offset.offset_ns);

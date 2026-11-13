@@ -420,7 +420,7 @@ async fn prepare_output(
     )
     .await
     .map_err(|e| {
-        diagnostics.lock().unwrap().record_failure(e.stage_code());
+        diagnostics.lock().unwrap().record_stream_failure(&e);
         stream_error(e)
     })
 }
@@ -429,7 +429,7 @@ fn stream_error(error: cap_core::streaming::StreamError) -> String {
     if error.receiver_in_use() {
         "receiver_in_use".into()
     } else {
-        format!("stream: {error}")
+        format!("stream: {}", error.failure_code())
     }
 }
 
@@ -443,7 +443,7 @@ async fn start_output(
 ) -> Result<ActiveOutput, String> {
     let metrics = prepared.metrics();
     let handle = prepared.start().await.map_err(|e| {
-        diagnostics.lock().unwrap().record_failure(e.stage_code());
+        diagnostics.lock().unwrap().record_stream_failure(&e);
         stream_error(e)
     })?;
     let (_, connection, heartbeat, _, _) = handle.into_parts();
@@ -699,7 +699,7 @@ async fn prepare_synchronized_stream(
         cap_core::streaming::prepare_group_live_stream(descriptors, &volumes, latency_ms, policy)
             .await
             .map_err(|e| {
-                diagnostics.lock().unwrap().record_failure(e.stage_code());
+                diagnostics.lock().unwrap().record_stream_failure(&e);
                 stream_error(e)
             })?;
     let options = get_audio_options(app.clone())?;
@@ -782,8 +782,8 @@ async fn prepare_synchronized_stream(
             .diagnostics
             .lock()
             .unwrap()
-            .record_failure(e.stage_code());
-        format!("stream: {e}")
+            .record_stream_failure(&e);
+        stream_error(e)
     })?;
     for ((connection, heartbeat, metrics), (ip, port, name, volume)) in
         handle.outputs.into_iter().zip(targets)

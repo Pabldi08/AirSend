@@ -96,6 +96,9 @@ mod tests {
 
 /// Only known transient transport/capture failures merit automatic retry.
 pub fn recoverable_failure(message: &str) -> bool {
+    if let Some(code) = message.strip_prefix("stream: ") {
+        return matches!(code, "timeout" | "transport");
+    }
     let message = message.to_lowercase();
     [
         "timeout",
@@ -118,6 +121,9 @@ mod recovery_tests {
     #[test]
     fn configuration_and_authentication_failures_do_not_repeat() {
         for message in [
+            "stream: authentication",
+            "stream: ptp_negotiation",
+            "stream: protocol",
             "invalid SRP proof",
             "wrong password",
             "receiver does not advertise PTP",
@@ -127,6 +133,8 @@ mod recovery_tests {
             assert!(!recoverable_failure(message));
         }
         for message in [
+            "stream: transport",
+            "stream: timeout",
             "pairing timeout (15s)",
             "RTSP connection refused",
             "selected_audio_output_unavailable",

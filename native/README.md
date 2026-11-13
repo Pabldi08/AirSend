@@ -56,6 +56,14 @@ el altavoz, vuelve a ponerla a sonar y pulsa **Reanudar**. La selección se guar
 por ruta del ejecutable, así que si una actualización cambia la ruta, vuelve
 a elegir la aplicación.
 
+### Comprobación de conexión con HomePod
+
+Anota el modelo, la versión exacta del software del HomePod, el modo de
+temporización y el búfer solicitado. Prueba conexión, parada y reanudación
+manual. Si falla, exporta **Diagnóstico** y anota `last_failure_stage` y
+`last_failure_code`. Un fallo de negociación PTP aparece como error de
+sincronización en WinUI. La prueba de un altavoz cubre la ruta individual.
+
 ## Validación con HomePod
 
 - Busca receptores, conecta uno, inicia la reproducción y cambia el volumen.

@@ -227,6 +227,10 @@ public sealed partial class MainWindow : Window
         {
             Status.Text = AppAudioError(error.Message);
         }
+        catch (InvalidOperationException error) when (AirPlayError(error.Message) is { } message)
+        {
+            Status.Text = message;
+        }
         catch (Exception error) { Status.Text = error.Message; }
         finally
         {
@@ -469,7 +473,7 @@ public sealed partial class MainWindow : Window
             catch (InvalidOperationException error) when (!cancelRequested)
             {
                 lastError = error;
-                if (command != "connect_device" && !error.Message.StartsWith("stream:", StringComparison.Ordinal)) break;
+                if (command != "connect_device" && error.Message is not ("stream: timeout" or "stream: transport")) break;
             }
         }
         throw lastError ?? new InvalidOperationException(L("El receptor no tiene dirección IP.", "The receiver has no IP address."));
@@ -531,7 +535,7 @@ public sealed partial class MainWindow : Window
         }
         catch (InvalidOperationException error) when (!cancelRequested)
         {
-            Status.Text = AppAudioError(error.Message) ??
+            Status.Text = AppAudioError(error.Message) ?? AirPlayError(error.Message) ??
                 L("No se pudo reanudar. Comprueba el altavoz y vuelve a intentarlo.", "Could not resume. Check the speaker and try again.");
             return;
         }
@@ -542,6 +546,19 @@ public sealed partial class MainWindow : Window
         standbyRoutes = null;
         Status.Text = "";
     });
+
+    private string? AirPlayError(string code) => code switch
+    {
+        "stream: authentication" => L("El altavoz rechazó la conexión. Revisa los permisos de AirPlay en Casa.",
+            "The speaker rejected the connection. Check AirPlay permissions in Home."),
+        "stream: ptp_negotiation" => L("No se pudo sincronizar el reloj del altavoz.",
+            "Could not synchronize the speaker clock."),
+        "stream: timeout" => L("El altavoz tardó demasiado en responder.", "The speaker took too long to respond."),
+        "stream: transport" => L("Se perdió la conexión con el altavoz.", "The connection to the speaker was lost."),
+        _ when code.StartsWith("stream: ", StringComparison.Ordinal) =>
+            L("El altavoz no pudo iniciar la reproducción.", "The speaker could not start playback."),
+        _ => null,
+    };
 
     private async void OnConnect(object sender, RoutedEventArgs args) => await Run(async () =>
     {

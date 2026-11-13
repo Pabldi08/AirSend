@@ -36,6 +36,7 @@ pub struct Record {
     ended: Option<Instant>,
     status: &'static str,
     last_failure_stage: Option<&'static str>,
+    last_failure_code: Option<&'static str>,
     requested_latency_ms: u32,
     policy: LocalBufferPolicy,
     capture_start_ms: f64,
@@ -113,6 +114,11 @@ impl Record {
     }
     pub fn record_failure(&mut self, stage: &'static str) {
         self.last_failure_stage = Some(stage);
+        self.last_failure_code = None;
+    }
+    pub fn record_stream_failure(&mut self, error: &cap_core::streaming::StreamError) {
+        self.last_failure_stage = Some(error.stage_code());
+        self.last_failure_code = Some(error.failure_code());
     }
     pub fn failed(&mut self) {
         self.status = "failed";
@@ -168,7 +174,7 @@ impl Record {
             })
             .unwrap_or("unknown");
         serde_json::json!({
-            "status": self.status, "last_failure_stage": self.last_failure_stage, "session_duration_ms": at.saturating_duration_since(self.began).as_millis() as u64,
+            "status": self.status, "last_failure_stage": self.last_failure_stage, "last_failure_code": self.last_failure_code, "session_duration_ms": at.saturating_duration_since(self.began).as_millis() as u64,
             "audio_format": { "sample_rate": 44_100, "channels": 2, "sample_bits": 16, "codec": "alac", "timing": timing },
             "requested_receiver_latency_ms": self.requested_latency_ms, "local_buffer_policy": self.policy,
             "capture_start_ms": self.capture_start_ms, "capture": self.capture,
@@ -189,6 +195,7 @@ impl DiagnosticState {
             ended: None,
             status: "preparing",
             last_failure_stage: None,
+            last_failure_code: None,
             requested_latency_ms: latency,
             policy,
             capture_start_ms: 0.0,
@@ -226,6 +233,18 @@ impl DiagnosticState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stream_failure_exports_only_the_stage_and_classification() {
+        let state = DiagnosticState::default();
+        let record = state.begin(100, LocalBufferPolicy::Stable);
+        record.lock().unwrap().record_stream_failure(&cap_core::streaming::StreamError::Encoder(
+            "private diagnostic detail".into(),
+        ));
+        let report = state.report();
+        assert_eq!(report["sessions"][0]["last_failure_code"], "encoder");
+        assert!(!report.to_string().contains("private diagnostic detail"));
+    }
     #[test]
     fn history_is_bounded_and_export_only_contains_typed_metrics() {
         let state = DiagnosticState::default();
