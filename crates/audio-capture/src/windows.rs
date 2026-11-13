@@ -263,6 +263,7 @@ fn capture_thread_main(
     mute_state: &AtomicU8,
 ) -> Result<bool, String> {
     let _mmcss = register_mmcss();
+    tx.set_mmcss(_mmcss.is_some());
 
     let notifications = crate::endpoints::Notifications::new().map_err(|e| e.to_string())?;
     let mut generation = notifications.generation.load(Ordering::Relaxed);

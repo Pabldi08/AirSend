@@ -261,6 +261,7 @@ public sealed partial class MainWindow
         var sessions = document.RootElement.GetProperty("sessions").EnumerateArray().ToArray();
         if (sessions.Length == 0)
         {
+            TransportDetails.Text = "";
             RequestedBufferValue.Text = EncoderBufferValue.Text = SendDelayValue.Text = SendIssuesValue.Text = "—";
             RecentErrors.Text = L("Sin errores recientes", "No recent errors");
             ConnectionWarning.Visibility = Visibility.Collapsed;
@@ -270,8 +271,16 @@ public sealed partial class MainWindow
         var outputs = latest.GetProperty("outputs").EnumerateArray().ToArray();
         var delay = outputs.Select(o => o.GetProperty("capture_delivery_to_udp_p95_ms"))
             .Where(v => v.ValueKind == JsonValueKind.Number).Select(v => v.GetDouble()).DefaultIfEmpty(-1).Max();
-        var losses = outputs.Sum(o => o.GetProperty("send_errors").GetInt64() + o.GetProperty("input_queue_drops").GetInt64()
-            + o.GetProperty("stale_drops").GetInt64() + o.GetProperty("encoder_underruns").GetInt64());
+        var transports = outputs.Where(o => o.GetProperty("transport_scope").GetString() != "group")
+            .Concat(outputs.Where(o => o.GetProperty("transport_scope").GetString() == "group").Take(1)).ToArray();
+        var sendErrors = transports.Sum(o => o.GetProperty("send_errors").GetInt64());
+        var discarded = transports.Sum(o => o.GetProperty("input_queue_drops").GetInt64() + o.GetProperty("stale_drops").GetInt64());
+        var underruns = transports.Sum(o => o.GetProperty("encoder_underruns").GetInt64());
+        var losses = sendErrors + discarded + underruns;
+        var reconnections = document.RootElement.GetProperty("reconnections").GetUInt64();
+        TransportDetails.Text = L(
+            $"Cola vacía: {underruns} · Bloques descartados: {discarded} · Fallos UDP: {sendErrors}\nReconexiones desde que abriste AirSend: {reconnections}",
+            $"Empty buffer: {underruns} · Discarded blocks: {discarded} · UDP errors: {sendErrors}\nReconnections since opening AirSend: {reconnections}");
         var errors = sessions.Reverse().Select(s => s.GetProperty("last_failure_stage").GetString())
             .Where(code => !string.IsNullOrWhiteSpace(code)).Take(3).Select(DescribeSessionError).ToArray();
         var requested = latest.GetProperty("requested_receiver_latency_ms").GetUInt32();

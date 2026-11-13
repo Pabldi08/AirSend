@@ -6,6 +6,7 @@ use cap_core::{
 };
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 pub type SessionRecord = Arc<Mutex<Record>>;
@@ -155,6 +156,7 @@ impl Record {
                 "rtp_sync_scheduled": s.rtp_sync_scheduled,
                 "rtp_timeline_catchups": s.rtp_timeline_catchups,
                 "rtp_timeline_skipped_frames": s.rtp_timeline_skipped_frames,
+                "sender_mmcss": s.sender_mmcss,
             })
         }).collect();
         let timing = self
@@ -187,8 +189,12 @@ impl Record {
 #[derive(Default)]
 pub struct DiagnosticState {
     sessions: Mutex<VecDeque<SessionRecord>>,
+    reconnections: AtomicU64,
 }
 impl DiagnosticState {
+    pub fn record_reconnection(&self) {
+        self.reconnections.fetch_add(1, Ordering::Relaxed);
+    }
     pub fn begin(&self, latency: u32, policy: LocalBufferPolicy) -> SessionRecord {
         let record = Arc::new(Mutex::new(Record {
             began: Instant::now(),
@@ -226,6 +232,7 @@ impl DiagnosticState {
             "os": std::env::consts::OS, "architecture": std::env::consts::ARCH,
             "measurement": "software capture delivery to local UDP send; excludes audio-engine, receiver and acoustic delay",
             "sessions": sessions,
+            "reconnections": self.reconnections.load(Ordering::Relaxed),
         })
     }
 }

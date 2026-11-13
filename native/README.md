@@ -64,6 +64,23 @@ manual. Si falla, exporta **Diagnóstico** y anota `last_failure_stage` y
 `last_failure_code`. Un fallo de negociación PTP aparece como error de
 sincronización en WinUI. La prueba de un altavoz cubre la ruta individual.
 
+### Diagnóstico con carga de CPU y Wi-Fi
+
+La captura conserva MMCSS **Pro Audio** para atender los plazos del
+dispositivo. El hilo dedicado de envío usa **Audio** con prioridad alta.
+El informe indica si Windows registró cada hilo. Compara primero una
+sesión normal con una bajo carga de CPU. Repite con tráfico Wi-Fi de fondo
+y el mismo búfer solicitado. Compara el p95 del envío local, descartes,
+veces que se vacía la cola y reconexiones. Anota los cortes que oigas
+durante cada prueba para contrastarlos con las métricas del emisor.
+
+qWAVE queda como experimento de red: medir primero si la prioridad aplicada
+al socket UDP de audio llega al punto de acceso y cambia los cortes. Para el
+búfer adaptativo, usar una misma política por grupo y exigir varios
+intervalos con presión de cola antes de ajustar el margen. La reducción
+del margen necesita un periodo estable más largo. El búfer solicitado al
+receptor requiere renegociación y sigue bajo control manual.
+
 ## Validación con HomePod
 
 - Busca receptores, conecta uno, inicia la reproducción y cambia el volumen.

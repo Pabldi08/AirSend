@@ -53,7 +53,7 @@ fn set_realtime_priority() {
     }
 }
 
-/// Keep the current thread in the "Pro Audio" MMCSS task class for as long as
+/// Keep the current thread in the "Audio" MMCSS task class for as long as
 /// the returned guard is alive.
 #[cfg(windows)]
 struct MmcssGuard(*mut std::ffi::c_void);
@@ -81,7 +81,7 @@ fn set_realtime_priority() -> Option<MmcssGuard> {
     type HANDLE = *mut c_void;
     #[allow(non_camel_case_types)]
     type BOOL = i32;
-    const AVRT_PRIORITY_CRITICAL: i32 = 2;
+    const AVRT_PRIORITY_HIGH: i32 = 1;
 
     #[link(name = "avrt")]
     extern "system" {
@@ -91,19 +91,19 @@ fn set_realtime_priority() -> Option<MmcssGuard> {
     }
 
     unsafe {
-        let task: Vec<u16> = "Pro Audio\0".encode_utf16().collect();
+        let task: Vec<u16> = "Audio\0".encode_utf16().collect();
         let mut task_index: u32 = 0;
         let handle = AvSetMmThreadCharacteristicsW(task.as_ptr(), &mut task_index as *mut _);
         if handle.is_null() {
-            tracing::warn!("Windows: AvSetMmThreadCharacteristicsW(\"Pro Audio\") returned NULL");
+            tracing::warn!("Windows: MMCSS Audio registration failed");
             None
-        } else if AvSetMmThreadPriority(handle, AVRT_PRIORITY_CRITICAL) == 0 {
-            tracing::warn!("Windows: AvSetMmThreadPriority(CRITICAL) failed");
+        } else if AvSetMmThreadPriority(handle, AVRT_PRIORITY_HIGH) == 0 {
+            tracing::warn!("Windows: MMCSS Audio high priority failed");
             let _ = AvRevertMmThreadCharacteristics(handle);
             None
         } else {
             tracing::info!(
-                "Windows: MMCSS \"Pro Audio\" task associated at CRITICAL priority (task_index={task_index})"
+                "Windows: MMCSS Audio registered at high priority (task_index={task_index})"
             );
             Some(MmcssGuard(handle))
         }
@@ -226,6 +226,8 @@ fn sender_thread_main(
     stop: Arc<std::sync::atomic::AtomicBool>,
 ) {
     let _priority_guard = set_realtime_priority();
+    #[cfg(windows)]
+    metrics.sender_mmcss.store(if _priority_guard.is_some() { 1 } else { 2 }, Ordering::Relaxed);
     #[cfg(not(test))]
     disable_wifi_power_save();
 

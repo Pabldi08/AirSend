@@ -276,6 +276,7 @@
                             </Border>
                         </Grid>
                         <TextBlock x:Name="RecentErrors" TextWrapping="Wrap" />
+                        <TextBlock x:Name="TransportDetails" TextWrapping="Wrap" />
                         <Expander x:Name="DiagnosticPreview" HorizontalAlignment="Stretch">
                             <TextBlock x:Name="PreviewText" TextWrapping="Wrap" />
                         </Expander>

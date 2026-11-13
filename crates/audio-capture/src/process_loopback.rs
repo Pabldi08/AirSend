@@ -509,6 +509,7 @@ fn capture_app(
     reconcile_inputs(&mut inputs, &mut roots, fmt, running)?;
     init.send(Ok(())).map_err(|error| error.to_string())?;
     let _mmcss = crate::windows::register_mmcss();
+    sender.set_mmcss(_mmcss.is_some());
     let channels = usize::from(fmt.channels);
     let samples_per_chunk = CHUNK_FRAMES * channels;
     let period = Duration::from_secs_f64(CHUNK_FRAMES as f64 / f64::from(fmt.sample_rate));

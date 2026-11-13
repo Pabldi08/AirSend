@@ -1519,6 +1519,7 @@ async fn resume_streaming(app: AppHandle) -> Result<(), String> {
     *slot = Some(active);
     state.standby.lock().unwrap().take();
     start_session_monitor(app.clone(), pending.generation);
+    app.diagnostics().record_reconnection();
     emit_session(&app, pending.generation, "streaming");
     Ok(())
 }
@@ -2035,6 +2036,7 @@ fn start_session_monitor(app: AppHandle, generation: u64) {
                             }
                             let _ = stream.apply_mute(&app);
                             *slot = Some(stream);
+                            app.diagnostics().record_reconnection();
                             emit_session(&app, generation, "streaming");
                             last_send_errors = 0;
                             failed_sends = 0;

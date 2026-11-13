@@ -15,6 +15,7 @@ pub enum CapturePolicy {
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct CaptureDiagnostics {
+    pub mmcss: Option<&'static str>,
     pub queued_blocks: usize,
     pub queued_ms: f64,
     pub dropped_oldest: u64,
@@ -73,6 +74,12 @@ impl Queue {
 }
 
 impl CaptureSender {
+    #[cfg(windows)]
+    pub(crate) fn set_mmcss(&self, registered: bool) {
+        self.0.queue.lock().unwrap().stats.mmcss =
+            Some(if registered { "pro_audio" } else { "unavailable" });
+    }
+
     pub fn len(&self) -> usize {
         self.0.queue.lock().unwrap().frames.len()
     }
