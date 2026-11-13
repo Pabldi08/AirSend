@@ -47,25 +47,22 @@ The sender is vendored from
 `9edef3287ae1ade1248ea4f18f1bc41a8780005b`, based on the project's existing
 `Pabldi08/airplay2-rs` revision `dc66e2b`. Credit for the receiver compatibility
 and initial PTP fixes belongs to DavidTIBO. Additional exchange validation and
-RTP regression cases are included here. The original license and exact
-provenance are retained in `vendor/airplay2-rs/PROVENANCE.json` and `LICENSE`.
+RTP regression cases are included here. The snapshot's exact provenance
+and GPL-3.0-or-later licensing basis are recorded in
+[`PROVENANCE.json`](../vendor/airplay2-rs/PROVENANCE.json).
 The Unix socket-QoS guard and Windows sender priority support remain present.
 Vendoring makes the tested combination reproducible; maintainers may prefer to
 land those changes in their sender fork and restore a pinned Git dependency.
 
 ## Pending before audio review/merge
 
-The maintainer requested the following in PR #28. The negotiation and licensing items remain open; incorporating the merged
-minimum/migration fixes does not resolve them:
+The maintainer requested the following in PR #28:
 
 - Handle PTP negotiation failures explicitly. Do not leave a failed preparation
   looking like successful streaming; agree the fallback/error policy with #26.
 - Preserve the merged upstream fixes during further timing work. The current
   branch includes #27's global/per-receiver zero migration, 100 ms minimum and
   pre-state-change validation. Regression checks cover these cases.
-- Resolve the sender licensing discrepancy identified by the maintainer before
-  distributing an installer with the updated dependency. Exact source and
-  existing license files are preserved here; they are not a licensing conclusion.
 
 Desktop navigation/layout and anonymized screenshots have been moved to a
 separate PR [#29](https://github.com/Pabldi08/AirSend/pull/29) based on main. This candidate retains the original narrow

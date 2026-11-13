@@ -7,5 +7,9 @@
     "Live RTP gap regression tests",
     "Trim inherited trailing whitespace"
   ],
-  "license_file": "LICENSE"
+  "license": "GPL-3.0-or-later",
+  "license_file": "LICENSE",
+  "upstream_relicense": "https://github.com/lmcgartland/airplay2-rs/commit/714d885a6024cf5b65fdcc6424b5d7bbad828037",
+  "license_clarification": "https://github.com/Pabldi08/AirSend/issues/5",
+  "fork_license_basis": "The AirSend maintainer confirmed compatibility of the fork contributions included in this snapshot. Issue #5 documents the upstream relicensing."
 }

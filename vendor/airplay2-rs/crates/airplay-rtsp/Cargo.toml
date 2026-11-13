@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "airplay-rtsp"
 version.workspace = true
 edition.workspace = true

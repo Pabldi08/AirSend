@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "airplay-audio"
 version.workspace = true
 edition.workspace = true

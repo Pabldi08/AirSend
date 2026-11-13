@@ -130,6 +130,10 @@ Release instructions and maintainer notes live in
 AirSend is free software licensed under the
 [GNU General Public License v3.0 or later](LICENSE).
 
+The vendored `airplay2-rs` snapshot uses the same SPDX identifier,
+`GPL-3.0-or-later`. Its exact revision, fork ancestry, and licensing basis
+are recorded in [PROVENANCE.json](vendor/airplay2-rs/PROVENANCE.json).
+
 The project incorporates and modifies code from
 [`lmcgartland/airplay2-rs`](https://github.com/lmcgartland/airplay2-rs),
 which is also licensed under GPL-3.0-or-later. See the `LICENSE` file for

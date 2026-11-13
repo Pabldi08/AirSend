@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "airplay-discovery"
 version.workspace = true
 edition.workspace = true
