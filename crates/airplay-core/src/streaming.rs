@@ -96,6 +96,17 @@ pub enum StreamError {
 }
 
 impl StreamError {
+    pub fn receiver_in_use(&self) -> bool {
+        match self {
+            Self::Client { source, .. } => matches!(
+                source,
+                ap2rs_core::Error::Rtsp(ap2rs_core::RtspError::ReceiverInUse)
+            ),
+            Self::RetryExhausted { last, .. } => last.receiver_in_use(),
+            _ => false,
+        }
+    }
+
     pub fn stage_code(&self) -> &'static str {
         match self {
             Self::Client { stage, .. } => match stage {

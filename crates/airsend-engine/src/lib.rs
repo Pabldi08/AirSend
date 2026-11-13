@@ -7,6 +7,7 @@ pub use audio_capture::AudioEndpoint;
 pub use platform::AppHandle;
 pub mod preferences;
 mod session;
+mod standby;
 use cap_core::discovery::DiscoveryEvent;
 use cap_core::streaming::{LocalBufferPolicy, PreparedLiveStream};
 pub use diagnostics::DiagnosticState;
@@ -197,6 +198,7 @@ struct ActiveStream {
     generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
     group_mode: bool,
     target_order: Vec<String>,
+    silence: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ActiveStream {
@@ -250,6 +252,27 @@ pub struct StreamingState {
     inner: tokio::sync::Mutex<Option<ActiveStream>>,
     last_latency_change: tokio::sync::Mutex<Option<Instant>>,
     phase: Mutex<(u64, &'static str)>,
+    manual_resume: std::sync::atomic::AtomicBool,
+    standby: Mutex<Option<PendingResume>>,
+}
+
+#[derive(Clone)]
+struct PendingResume {
+    generation: u64,
+    targets: Vec<(String, u16, String, f32)>,
+    latency_ms: u32,
+    group_mode: bool,
+}
+
+fn standby_detector(app: &AppHandle) -> Option<standby::SilenceDetector> {
+    use std::sync::atomic::Ordering;
+    if !app.streaming().manual_resume.load(Ordering::Relaxed) {
+        return None;
+    }
+    let options = get_standby_options(app).unwrap_or_default();
+    options
+        .enabled
+        .then(|| standby::SilenceDetector::new(options))
 }
 
 fn output_key(ip: &str, port: u16) -> String {
@@ -397,8 +420,16 @@ async fn prepare_output(
     .await
     .map_err(|e| {
         diagnostics.lock().unwrap().record_failure(e.stage_code());
-        format!("stream: {e}")
+        stream_error(e)
     })
+}
+
+fn stream_error(error: cap_core::streaming::StreamError) -> String {
+    if error.receiver_in_use() {
+        "receiver_in_use".into()
+    } else {
+        format!("stream: {error}")
+    }
 }
 
 async fn start_output(
@@ -412,7 +443,7 @@ async fn start_output(
     let metrics = prepared.metrics();
     let handle = prepared.start().await.map_err(|e| {
         diagnostics.lock().unwrap().record_failure(e.stage_code());
-        format!("stream: {e}")
+        stream_error(e)
     })?;
     let (_, connection, heartbeat, _, _) = handle.into_parts();
     Ok(ActiveOutput {
@@ -554,14 +585,17 @@ async fn prepare_stream(
     let stop_thread = stop.clone();
     let pump_senders = senders.clone();
     let pump_diagnostics = diagnostics.clone();
-    let pump_app = app.clone();
+    let detector = standby_detector(&app);
+    let silence = Arc::new(AtomicBool::new(false));
+    let pump_silence = silence.clone();
     let generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(generation));
     let pump_generation = generation.clone();
     let pump = std::thread::Builder::new()
         .name("airplay-pump".into())
         .spawn(move || {
             pump_loop(
-                pump_app,
+                detector,
+                pump_silence,
                 rx,
                 pump_senders,
                 sample_rate,
@@ -588,6 +622,7 @@ async fn prepare_stream(
         channels,
         generation,
         group_mode: false,
+        silence,
         target_order: targets
             .iter()
             .map(|(ip, port, _, _)| output_key(ip, *port))
@@ -664,7 +699,7 @@ async fn prepare_synchronized_stream(
             .await
             .map_err(|e| {
                 diagnostics.lock().unwrap().record_failure(e.stage_code());
-                format!("stream: {e}")
+                stream_error(e)
             })?;
     let options = get_audio_options(app.clone())?;
     let capture_policy = if policy == LocalBufferPolicy::LowLatency {
@@ -699,19 +734,19 @@ async fn prepare_synchronized_stream(
         sender,
     )])));
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let (pump_senders, pump_stop, pump_diagnostics, pump_app) = (
-        senders.clone(),
-        stop.clone(),
-        diagnostics.clone(),
-        app.clone(),
-    );
+    let (pump_senders, pump_stop, pump_diagnostics) =
+        (senders.clone(), stop.clone(), diagnostics.clone());
+    let detector = standby_detector(&app);
+    let silence = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pump_silence = silence.clone();
     let generation = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(generation));
     let pump_generation = generation.clone();
     let pump = std::thread::Builder::new()
         .name("airplay-group-pump".into())
         .spawn(move || {
             pump_loop(
-                pump_app,
+                detector,
+                pump_silence,
                 rx,
                 pump_senders,
                 44100,
@@ -735,6 +770,7 @@ async fn prepare_synchronized_stream(
         channels: 2,
         generation,
         group_mode: true,
+        silence,
         target_order: targets
             .iter()
             .map(|(ip, port, _, _)| output_key(ip, *port))
@@ -822,6 +858,10 @@ pub async fn start_group_streaming(
     let mut token = state.control.begin();
     let generation = token.generation;
     let _operation = state.operation.lock().await;
+    if state.control.current() != generation {
+        return Err("session_cancelled".into());
+    }
+    state.standby.lock().unwrap().take();
     emit_session(&app, generation, "preparing");
     let prepared = tokio::select! { biased; _ = token.cancelled() => return Err("session_cancelled".into()), result = prepare_synchronized_stream(app.clone(), &targets, latency_ms, generation) => result };
     let mut active = match prepared {
@@ -880,6 +920,7 @@ pub async fn start_streaming(
         return Err("session_cancelled".into());
     }
     let generation = token.generation;
+    state.standby.lock().unwrap().take();
     emit_session(&app, generation, "preparing");
     let targets = [(parsed.to_string(), port, name, volume)];
     let prepared = tokio::select! {
@@ -1020,7 +1061,8 @@ pub async fn add_streaming(
 }
 
 fn pump_loop(
-    _app: AppHandle,
+    mut detector: Option<standby::SilenceDetector>,
+    silence: std::sync::Arc<std::sync::atomic::AtomicBool>,
     rx: audio_capture::CaptureReceiver,
     senders: std::sync::Arc<Mutex<HashMap<String, cap_core::streaming::LiveFrameSender>>>,
     sample_rate: u32,
@@ -1045,6 +1087,15 @@ fn pump_loop(
             Ok(frame) => {
                 let now = Instant::now();
                 max_capture_gap = max_capture_gap.max(now.saturating_duration_since(last_frame));
+                if let Some(detector) = detector.as_mut() {
+                    if now.saturating_duration_since(last_frame) > Duration::from_secs(1) {
+                        detector.reset();
+                    }
+                    silence.store(
+                        detector.observe(&frame.samples, channels, now),
+                        Ordering::Relaxed,
+                    );
+                }
                 last_frame = now;
                 let Ok(targets) = senders.lock() else {
                     unexpected_exit = true;
@@ -1089,7 +1140,13 @@ fn pump_loop(
                     max_capture_gap = Duration::ZERO;
                 }
             }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                if let Some(detector) = detector.as_mut() {
+                    detector.reset();
+                    silence.store(false, Ordering::Relaxed);
+                }
+                continue;
+            }
             Err(_) => {
                 // El canal de captura se cerró sin que nosotros pidamos shutdown:
                 // device removed, driver crash, parec mató al subproceso, etc.
@@ -1119,6 +1176,7 @@ fn pump_loop(
 
 pub async fn stop_streaming(app: AppHandle, state: &StreamingState) -> Result<(), String> {
     state.control.cancel();
+    state.standby.lock().unwrap().take();
     emit_session(&app, state.control.current(), "disconnected");
     let active = state.inner.lock().await.take();
     if let Some(mut active) = active {
@@ -1357,6 +1415,66 @@ pub async fn save_audio_options(
         serde_json::to_value(options).map_err(|e| e.to_string())?,
     )
 }
+
+fn get_standby_options(app: &AppHandle) -> Result<standby::Options, String> {
+    let options: standby::Options = app
+        .store()
+        .get("standby")
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
+    options.validate()?;
+    Ok(options)
+}
+
+async fn save_standby_options(app: &AppHandle, options: standby::Options) -> Result<(), String> {
+    options.validate()?;
+    let state = app.streaming();
+    let _operation = state.operation.lock().await;
+    if state.inner.lock().await.is_some() {
+        return Err("stop_before_source_change".into());
+    }
+    app.store().set(
+        "standby",
+        serde_json::to_value(options).map_err(|error| error.to_string())?,
+    )
+}
+
+async fn resume_streaming(app: AppHandle) -> Result<(), String> {
+    let state = app.streaming();
+    let _operation = state.operation.lock().await;
+    let pending = state
+        .standby
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("no_session_to_resume")?;
+    if pending.generation != state.control.current() {
+        return Err("session_cancelled".into());
+    }
+    let mut token = state.control.subscribe(pending.generation);
+    let prepared = tokio::select! {
+        biased;
+        _ = token.cancelled() => return Err("session_cancelled".into()),
+        result = prepare_targets(app.clone(), &pending.targets, pending.latency_ms, pending.generation, pending.group_mode) => result,
+    };
+    let mut active = prepared?;
+    let mut slot = state.inner.lock().await;
+    if pending.generation != state.control.current() {
+        drop(slot);
+        active.shutdown();
+        active.stop_outputs().await;
+        return Err("session_cancelled".into());
+    }
+    let _ = active.apply_mute(&app);
+    *slot = Some(active);
+    state.standby.lock().unwrap().take();
+    start_session_monitor(app.clone(), pending.generation);
+    emit_session(&app, pending.generation, "streaming");
+    Ok(())
+}
+
 pub async fn get_session_status(state: &StreamingState) -> Result<serde_json::Value, String> {
     let stream = state.inner.lock().await;
     Ok(match stream.as_ref() {
@@ -1553,9 +1671,16 @@ pub async fn confirm_latency(
     state: &StreamingState,
 ) -> Result<bool, String> {
     cap_core::streaming::validate_latency_ms(latency_ms).map_err(|e| e.to_string())?;
+    let previous_generation = state.control.current();
+    let _operation = state.operation.lock().await;
+    if previous_generation != state.control.current() {
+        return Err("session_cancelled".into());
+    }
+    if state.standby.lock().unwrap().is_some() {
+        return Err("resume_required".into());
+    }
     let mut token = state.control.begin();
     let generation = token.generation;
-    let _operation = state.operation.lock().await;
     if generation != state.control.current() {
         return Err("session_cancelled".into());
     }
@@ -1612,6 +1737,19 @@ pub async fn confirm_latency(
                 if token.generation != state.control.current() {
                     return Err(error);
                 }
+                if state
+                    .manual_resume
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    *state.standby.lock().unwrap() = Some(PendingResume {
+                        generation,
+                        targets,
+                        latency_ms: old_latency_ms,
+                        group_mode,
+                    });
+                    emit_session(&app, generation, "resume_required");
+                    return Err(error);
+                }
                 let restored = tokio::select! { biased; _ = token.cancelled() => return Err("session_cancelled".into()), result = prepare_targets(
                     app.clone(),
                     &targets,
@@ -1637,6 +1775,30 @@ pub async fn confirm_latency(
     monitor_active(&app, &state, generation).await;
     *changed = Some(Instant::now());
     Ok(restarted)
+}
+
+#[cfg(test)]
+mod standby_session_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stop_clears_the_pending_resume_without_starting_a_connection() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = AppHandle::new(directory.path().into(), |_, _| {}).unwrap();
+        let state = app.streaming();
+        let generation = state.control.begin().generation;
+        *state.standby.lock().unwrap() = Some(PendingResume {
+            generation,
+            targets: Vec::new(),
+            latency_ms: 3000,
+            group_mode: false,
+        });
+        emit_session(&app, generation, "standby");
+        assert_eq!(get_session_status(state).await.unwrap()["status"], "standby");
+        stop_streaming(app.clone(), state).await.unwrap();
+        assert_eq!(get_session_status(state).await.unwrap()["status"], "disconnected");
+        assert_eq!(resume_streaming(app).await, Err("no_session_to_resume".into()));
+    }
 }
 
 // ── System tray (C3) ─────────────────────────────────────────────────────────
@@ -1693,6 +1855,17 @@ fn start_session_monitor(app: AppHandle, generation: u64) {
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
             let state = app.streaming();
+            let manual = state
+                .manual_resume
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let _operation = if manual {
+                Some(state.operation.lock().await)
+            } else {
+                None
+            };
+            if state.control.current() != generation {
+                return;
+            }
             let reason = {
                 let slot = state.inner.lock().await;
                 let Some(active) = slot.as_ref().filter(|s| {
@@ -1713,6 +1886,8 @@ fn start_session_monitor(app: AppHandle, generation: u64) {
                     Some("feedback_failed")
                 } else if failed_sends >= 3 {
                     Some("transport_failed")
+                } else if active.silence.load(std::sync::atomic::Ordering::Relaxed) {
+                    Some("idle")
                 } else {
                     None
                 }
@@ -1737,10 +1912,34 @@ fn start_session_monitor(app: AppHandle, generation: u64) {
                 .collect::<Vec<_>>();
             let latency_ms = failed.latency_ms;
             let group_mode = failed.group_mode;
-            failed.diagnostics.lock().unwrap().record_failure(reason);
+            if reason != "idle" {
+                failed.diagnostics.lock().unwrap().record_failure(reason);
+            }
             failed.shutdown();
             failed.stop_outputs().await;
             drop(failed);
+            if manual {
+                let _ = disconnect_device(app.connection()).await;
+                let mut pending = state.standby.lock().unwrap();
+                if state.control.current() == generation {
+                    *pending = Some(PendingResume {
+                        generation,
+                        targets,
+                        latency_ms,
+                        group_mode,
+                    });
+                    emit_session(
+                        &app,
+                        generation,
+                        if reason == "idle" {
+                            "standby"
+                        } else {
+                            "resume_required"
+                        },
+                    );
+                }
+                return;
+            }
             // A user-requested replacement/Stop always takes priority over automatic recovery.
             if state.control.current() != generation {
                 return;

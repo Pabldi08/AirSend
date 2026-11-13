@@ -46,11 +46,9 @@ public sealed partial class MainWindow
         MuteLocalDescription.Text = L("Deja de oír el audio en el PC mientras se envía al altavoz.", "Mute PC audio while sending it to the speaker.");
         ReducedBufferLabel.Text = L("Búfer local reducido", "Reduced local buffer");
         ReducedBufferDescription.Text = L("Reduce la espera en el PC, con más riesgo de cortes.", "Reduces delay on the PC, with a higher chance of dropouts.");
-        AutoReconnectLabel.Text = L("Reconectar tras un fallo", "Reconnect after a failure");
-        AutoReconnectDescription.Text = L("Vuelve a intentarlo hasta tres veces.", "Try again up to three times.");
         foreach (var (control, label) in new[] { (Multiple, MultipleLabel), (StereoPairs, StereoPairsLabel),
                      (LegacyTiming, LegacyTimingLabel), (MuteLocal, MuteLocalLabel),
-                     (ReducedBuffer, ReducedBufferLabel), (AutoReconnect, AutoReconnectLabel) })
+                     (ReducedBuffer, ReducedBufferLabel) })
             Automation.SetName(control, label.Text);
 
         Automation.SetName(Buffer, L("Retraso de reproducción", "Playback delay"));
@@ -84,8 +82,8 @@ public sealed partial class MainWindow
         StopAndEdit.IsEnabled = StopAndEditGroups.IsEnabled = !busy;
         Buffer.IsEnabled = !busy;
         UpdateBufferAction();
-        PlaybackChip.Visibility = playing ? Visibility.Visible : Visibility.Collapsed;
-        PlaybackState.Text = recovering || updatingBuffer
+        PlaybackChip.Visibility = playing || pendingResume is not null ? Visibility.Visible : Visibility.Collapsed;
+        PlaybackState.Text = pendingResume is not null ? L("En espera", "On standby") : recovering || updatingBuffer
             ? L("Reconectando…", "Reconnecting…")
             : L("Reproduciendo", "Playing");
         if (!playing || recovering) ConnectionWarning.Visibility = Visibility.Collapsed;
@@ -122,7 +120,7 @@ public sealed partial class MainWindow
         var remaining = latencyAvailableAt - Environment.TickCount64;
         Buffer.Header = $"{L("Límite de búfer solicitado", "Requested buffer limit")} · {Buffer.Value:0} ms";
         ApplyBuffer.Content = applied ? L("Aplicado", "Applied") : L("Aplicar", "Apply");
-        ApplyBuffer.IsEnabled = !busy && !updatingBuffer && !applied && remaining <= 0;
+        ApplyBuffer.IsEnabled = !busy && pendingResume is null && !updatingBuffer && !applied && remaining <= 0;
         if (!busy && !updatingBuffer && showingBufferWait)
         {
             if (!applied && remaining > 0) ShowBufferWait(remaining);

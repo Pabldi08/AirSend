@@ -92,6 +92,9 @@ pub enum PairingError {
 /// Errors during RTSP communication.
 #[derive(Error, Debug)]
 pub enum RtspError {
+    #[error("Receiver is in use by another device")]
+    ReceiverInUse,
+
     #[error("Connection refused")]
     ConnectionRefused,
 

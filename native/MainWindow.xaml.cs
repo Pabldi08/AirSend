@@ -198,10 +198,12 @@ public sealed partial class MainWindow : Window
     private void UpdateControls()
     {
         OutputName.Text = output?.Name ?? L("Ningún altavoz conectado", "No speaker connected");
-        var canStop = active.Count != 0 || recovering;
+        var canStop = active.Count != 0 || recovering || pendingResume is not null;
         Play.Content = canStop ? L("Parar", "Stop") : L("Enviar audio del PC", "Send PC audio");
         Play.Style = (Style)Root.Resources[canStop ? "StopAudioStyle" : "SendAudioStyle"];
-        Play.IsEnabled = !busy && (output is not null || active.Count != 0 || recovering);
+        Play.IsEnabled = !busy && (output is not null || canStop);
+        Resume.Visibility = pendingResume is not null ? Visibility.Visible : Visibility.Collapsed;
+        Resume.IsEnabled = !busy;
         Scan.IsEnabled = !busy;
         AddManual.IsEnabled = !busy && ValidEndpoint(Endpoint.Text);
         UpdateReceiverActions();
@@ -217,6 +219,10 @@ public sealed partial class MainWindow : Window
         UpdateControls();
         try { await work(); }
         catch (Exception error) when (cancelRequested && error.Message == "session_cancelled") { }
+        catch (InvalidOperationException error) when (error.Message == "receiver_in_use")
+        {
+            Status.Text = L("El altavoz está en uso por otro dispositivo.", "The speaker is in use by another device.");
+        }
         catch (Exception error) { Status.Text = error.Message; }
         finally
         {
@@ -278,7 +284,7 @@ public sealed partial class MainWindow : Window
         refreshing = true;
         try
         {
-            if (active.Count != 0 || recovering)
+            if (active.Count != 0 || recovering || pendingResume is not null)
                 await ReadSession();
             if (AppWindow.IsVisible) UpdateControls();
             if (!busy && AppWindow.IsVisible)
@@ -428,7 +434,9 @@ public sealed partial class MainWindow : Window
             var added = ReadDevice(await NativeEngine.Invoke(new { command = "add_manual_device", ip, port, name }));
             receiver = (await ReadDevices()).First(r => r.Id == added.Group);
         }
-        await Stream(receiver, "start_streaming", (ip, port));
+        output = receiver;
+        connectedRoute = (ip, port);
+        await LoadReceiverSettings(receiver, true);
     }
 
     private async void OnAddManual(object sender, RoutedEventArgs args) => await Run(async () =>
@@ -489,6 +497,8 @@ public sealed partial class MainWindow : Window
         await NativeEngine.Invoke(new { command = "stop_streaming" });
         await NativeEngine.Invoke(new { command = "disconnect_device" });
         active.Clear();
+        pendingResume = null;
+        standbyRoutes = null;
         recovering = synchronized = false;
         ReceiverVolumes.Children.Clear();
         receiverVolumeSignature = null;
@@ -498,13 +508,39 @@ public sealed partial class MainWindow : Window
 
     private async void OnPlay(object sender, RoutedEventArgs args) => await Run(async () =>
     {
-        if (active.Count != 0 || recovering) await Stop();
+        if (active.Count != 0 || recovering || pendingResume is not null) await Stop();
         else if (output is not null) await Stream(output, "start_streaming", connectedRoute);
+    });
+
+    private async void OnResume(object sender, RoutedEventArgs args) => await Run(async () =>
+    {
+        if (pendingResume is null) return;
+        try
+        {
+            await WithCancellation(() => NativeEngine.Invoke(new { command = "resume_streaming" }));
+        }
+        catch (InvalidOperationException error) when (!cancelRequested && error.Message == "receiver_in_use")
+        {
+            Status.Text = L("El altavoz está en uso por otro dispositivo.", "The speaker is in use by another device.");
+            return;
+        }
+        catch (InvalidOperationException) when (!cancelRequested)
+        {
+            Status.Text = L("No se pudo reanudar. Comprueba el altavoz y vuelve a intentarlo.", "Could not resume. Check the speaker and try again.");
+            return;
+        }
+        if (cancelRequested) return;
+        if (standbyRoutes is not null)
+            foreach (var (id, route) in standbyRoutes) active[id] = route;
+        pendingResume = null;
+        standbyRoutes = null;
+        Status.Text = "";
     });
 
     private async void OnConnect(object sender, RoutedEventArgs args) => await Run(async () =>
     {
         if (sender is not Button { Tag: Receiver receiver }) return;
+        if (pendingResume is not null) await Stop();
         if (synchronized)
         {
             if (receiver.Id == output?.Id || active.ContainsKey(receiver.Id))

@@ -778,6 +778,7 @@ impl Connection {
         );
         let setup1_req = RtspRequest::setup(self.session.request_uri(), setup1_body);
         let setup1_resp = self.rtsp.send(setup1_req).await?;
+        setup1_resp.check_receiver_in_use()?;
 
         // Log the response for debugging
         if let Some(ref body) = setup1_resp.body {
@@ -833,6 +834,7 @@ impl Connection {
         let setup2_body = self.session.build_setup_phase2()?;
         let setup2_req = RtspRequest::setup(self.session.request_uri(), setup2_body);
         let setup2_resp = self.rtsp.send(setup2_req).await?;
+        setup2_resp.check_receiver_in_use()?;
         tracing::debug!(
             "SETUP phase 2 response: status={}, body_len={}, has_body={}",
             setup2_resp.status_code,
@@ -859,6 +861,7 @@ impl Connection {
                 if resp.status_code == 200 {
                     tracing::info!("RECORD acknowledged");
                 } else {
+                    resp.check_receiver_in_use()?;
                     warn!("RECORD returned status {} (continuing anyway)", resp.status_code);
                 }
             }
@@ -1730,6 +1733,7 @@ impl Connection {
         );
         let setup1_req = RtspRequest::setup(self.session.request_uri(), setup1_body);
         let setup1_resp = self.rtsp.send(setup1_req).await?;
+        setup1_resp.check_receiver_in_use()?;
 
         if let Some(ref body) = setup1_resp.body {
             tracing::debug!(
@@ -1777,6 +1781,7 @@ impl Connection {
         let setup2_body = self.session.build_setup_phase2()?;
         let setup2_req = RtspRequest::setup(self.session.request_uri(), setup2_body);
         let setup2_resp = self.rtsp.send(setup2_req).await?;
+        setup2_resp.check_receiver_in_use()?;
         tracing::debug!(
             "SETUP phase 2 response (group member): status={}, body_len={}",
             setup2_resp.status_code,
@@ -1799,6 +1804,7 @@ impl Connection {
                 if resp.status_code == 200 {
                     tracing::info!("RECORD acknowledged (group member)");
                 } else {
+                    resp.check_receiver_in_use()?;
                     warn!("RECORD returned status {} (group member, continuing)", resp.status_code);
                 }
             }

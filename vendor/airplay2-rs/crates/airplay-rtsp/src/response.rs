@@ -14,6 +14,19 @@ pub struct RtspResponse {
 }
 
 impl RtspResponse {
+    /// Only use an explicit peer reason. Generic 4xx or "Busy" responses
+    /// don't establish that another device is playing.
+    pub fn check_receiver_in_use(&self) -> Result<()> {
+        if !self.is_success()
+            && ["in use by another device", "already playing from another device"]
+                .iter()
+                .any(|reason| self.status_text.to_ascii_lowercase().contains(reason))
+        {
+            return Err(RtspError::ReceiverInUse.into());
+        }
+        Ok(())
+    }
+
     /// Parse response from wire format.
     ///
     /// Format:
@@ -157,6 +170,21 @@ fn parse_status_line(line: &str) -> Result<(u16, String)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_explicit_receiver_occupancy_is_classified_as_in_use() {
+        use super::*;
+
+        let parse = |status: &str| {
+            RtspResponse::parse(format!("RTSP/1.0 {status}\r\nCSeq: 1\r\n\r\n").as_bytes()).unwrap()
+        };
+        assert!(matches!(
+            parse("409 In use by another device").check_receiver_in_use(),
+            Err(airplay_core::Error::Rtsp(RtspError::ReceiverInUse))
+        ));
+        assert!(parse("453 Not Enough Bandwidth").check_receiver_in_use().is_ok());
+        assert!(parse("503 Busy").check_receiver_in_use().is_ok());
+    }
+
     use super::*;
     use serde::Deserialize;
 

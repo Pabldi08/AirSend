@@ -24,13 +24,20 @@ dotnet publish native/AirSend.csproj -c Release -p:Platform=x64 --self-contained
 ```
 
 Cierra la edición anterior antes de probar la nativa. Ambas leen el mismo
-`settings.json` de AirSend en `%APPDATA%`. Un último receptor guardado activa
-el flujo de reconexión y reproducción al arrancar.
+`settings.json` de AirSend en `%APPDATA%`. WinUI selecciona el último
+receptor guardado al arrancar. El envío empieza al pulsar **Enviar audio del PC**.
 
 En **Audio → Avanzado**, **Silenciar salida local** silencia la salida de
 Windows seleccionada mientras sigue sonando el altavoz AirPlay. AirSend
 restaura el sonido local al parar o si se interrumpe la captura.
 **Búfer local reducido** se puede activar con la reproducción detenida.
+
+**Liberar el altavoz durante el silencio** viene desactivado. Para probarlo,
+actívalo en **Audio → Avanzado** y elige un minuto. Con el HomePod reproduciendo
+desde AirSend, deja en silencio la fuente hasta ver **En espera**. Inicia
+AirPlay desde el iPhone y vuelve a reproducir audio en el PC. El iPhone debe
+seguir sonando hasta que decidas pulsar **Reanudar**. Comprueba que **Parar**
+cancela la espera y que al reiniciar WinUI el altavoz sigue en manos del iPhone.
 
 ## Validación con HomePod
 

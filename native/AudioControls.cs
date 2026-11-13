@@ -13,8 +13,12 @@ public sealed partial class MainWindow
 {
     private sealed record AudioOutput(string? Id, string Name);
     private sealed record AudioOptions(string? device_id, bool mute_local, bool legacy_timing);
+    private sealed record StandbyOptions(bool enabled, int minutes, int threshold_dbfs);
 
     private AudioOptions audioOptions = new(null, false, false);
+    private StandbyOptions standbyOptions = new(false, 5, -65);
+    private string? pendingResume;
+    private Dictionary<string, (string Ip, int Port)>? standbyRoutes;
     private uint latency = 3000;
     private long latencyAvailableAt;
     private long refreshVolumesAt;
@@ -45,21 +49,25 @@ public sealed partial class MainWindow
         GroupHint.Text = L("Selecciona dos HomePods. Si falla un miembro, se detiene todo el grupo.",
             "Select two HomePods. If one member fails, the whole group stops.");
         GroupPlay.Content = L("Probar reproducción sincronizada", "Test synchronized playback");
-        AutoReconnectLabel.Text = L("Reconectar este receptor tras un fallo (hasta 3 intentos)",
-            "Reconnect this receiver after failure (up to 3 attempts)");
+        StandbyLabel.Text = L("Liberar el altavoz durante el silencio", "Release the speaker when silent");
+        StandbyMinutes.Header = L("Tiempo de silencio (minutos)", "Silence duration (minutes)");
+        StandbyThreshold.Header = L("Sensibilidad al silencio (dB)", "Silence sensitivity (dB)");
+        Resume.Content = L("Reanudar", "Resume");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(StandbyEnabled, StandbyLabel.Text);
         CancelOperation.Content = L("Cancelar operación", "Cancel operation");
         SetMuteStatus("off");
     }
 
     private void UpdateAudioControls()
     {
-        var idle = !busy && active.Count == 0 && !recovering;
+        var idle = !busy && active.Count == 0 && !recovering && pendingResume is null;
         AudioSource.IsEnabled = LegacyTiming.IsEnabled = MuteLocal.IsEnabled = ReducedBuffer.IsEnabled = idle;
         RefreshAudio.IsEnabled = !busy;
         StereoPairs.IsEnabled = GroupFirst.IsEnabled = GroupSecond.IsEnabled = idle;
         GroupPlay.IsEnabled = idle && GroupChoice(GroupFirst) is Receiver a && GroupChoice(GroupSecond) is Receiver b && a.Id != b.Id;
         Multiple.IsEnabled = !busy && !synchronized && !recovering;
-        AutoReconnect.IsEnabled = !busy && output is not null;
+        StandbyEnabled.IsEnabled = idle;
+        StandbyMinutes.IsEnabled = StandbyThreshold.IsEnabled = idle && StandbyEnabled.IsOn;
         CancelOperation.Visibility = cancellable ? Visibility.Visible : Visibility.Collapsed;
         CancelOperation.IsEnabled = !cancelRequested;
     }
@@ -84,6 +92,10 @@ public sealed partial class MainWindow
                 value.GetProperty("mute_local").GetBoolean(), value.GetProperty("legacy_timing").GetBoolean());
             LegacyTiming.IsOn = audioOptions.legacy_timing;
             MuteLocal.IsOn = audioOptions.mute_local;
+            var standby = await NativeEngine.Invoke(new { command = "get_standby_options" });
+            standbyOptions = new StandbyOptions(standby.GetProperty("enabled").GetBoolean(),
+                standby.GetProperty("minutes").GetInt32(), standby.GetProperty("threshold_dbfs").GetInt32());
+            ShowStandbyOptions();
             try { await ReadAudioOutputs(); }
             catch (InvalidOperationException error)
             {
@@ -178,7 +190,6 @@ public sealed partial class MainWindow
         try
         {
             Volume.Value = preferences.GetProperty("volume").GetDouble() * 100;
-            AutoReconnect.IsOn = preferences.GetProperty("reconnect").GetBoolean();
             if (loadLatency)
             {
                 latency = preferences.GetProperty("latency_ms").GetUInt32();
@@ -188,15 +199,34 @@ public sealed partial class MainWindow
         finally { applyingSettings = false; }
     }
 
-    private async void OnAutoReconnect(object sender, RoutedEventArgs args)
+    private void ShowStandbyOptions()
+    {
+        var wasApplying = applyingSettings;
+        applyingSettings = true;
+        StandbyEnabled.IsOn = standbyOptions.enabled;
+        StandbyMinutes.Value = standbyOptions.minutes;
+        StandbyThreshold.Value = standbyOptions.threshold_dbfs;
+        applyingSettings = wasApplying;
+    }
+
+    private async void OnStandbyOption(object sender, RoutedEventArgs args) => await SaveStandbyOptions();
+
+    private async void OnStandbyNumber(NumberBox sender, NumberBoxValueChangedEventArgs args) => await SaveStandbyOptions();
+
+    private async Task SaveStandbyOptions()
     {
         if (!initialized || applyingSettings || busy) return;
         await Run(async () =>
         {
-            if (output is null) return;
-            var reconnect = AutoReconnect.IsOn == true;
-            try { await PatchPreferences(output, new { reconnect }); }
-            catch { AutoReconnect.IsOn = !reconnect; throw; }
+            var options = new StandbyOptions(StandbyEnabled.IsOn,
+                double.IsFinite(StandbyMinutes.Value) ? (int)Math.Round(StandbyMinutes.Value) : standbyOptions.minutes,
+                double.IsFinite(StandbyThreshold.Value) ? (int)Math.Round(StandbyThreshold.Value) : standbyOptions.threshold_dbfs);
+            try
+            {
+                await NativeEngine.Invoke(new { command = "save_standby_options", options });
+                standbyOptions = options;
+            }
+            finally { ShowStandbyOptions(); }
         });
     }
 
@@ -324,7 +354,24 @@ public sealed partial class MainWindow
             Status.Text = L("Se interrumpió la reproducción: ", "Playback was interrupted: ") + failure.GetProperty("code").GetString();
             return;
         }
-        recovering = status.GetProperty("status").GetString() == "recovering";
+        var phase = status.GetProperty("status").GetString();
+        if (phase is "standby" or "resume_required")
+        {
+            if (pendingResume is null)
+            {
+                pendingResume = phase;
+                standbyRoutes = new(active);
+                active.Clear();
+                ReceiverVolumes.Children.Clear();
+                receiverVolumeSignature = null;
+                Status.Text = phase == "standby"
+                    ? L("AirSend ha liberado el altavoz. Pulsa Reanudar para volver a emitir.", "AirSend released the speaker. Select Resume to start sending audio.")
+                    : L("Se interrumpió la reproducción. Pulsa Reanudar para volver a emitir.", "Playback was interrupted. Select Resume to start sending audio.");
+            }
+            recovering = false;
+            return;
+        }
+        recovering = phase == "recovering";
         if (recovering)
         {
             recoveringStatusShown = true;

@@ -44,6 +44,7 @@ impl NativeHost {
             _ => {}
         })
         .map_err(|error| error.to_string())?;
+        app.streaming().manual_resume.store(true, Ordering::Relaxed);
         Ok(Self {
             runtime,
             app,
@@ -106,6 +107,11 @@ async fn execute(host: &NativeHost, mut request: Map<String, Value>) -> Result<V
             .await?,
         ),
         "stop_streaming" => serialize(crate::stop_streaming(app.clone(), app.streaming()).await?),
+        "resume_streaming" => serialize(crate::resume_streaming(app.clone()).await?),
+        "get_standby_options" => serialize(crate::get_standby_options(app)?),
+        "save_standby_options" => {
+            serialize(crate::save_standby_options(app, argument(&mut request, "options")?).await?)
+        }
         "remove_streaming" => serialize(
             crate::remove_streaming(
                 argument::<String>(&mut request, "ip")?,

@@ -224,6 +224,13 @@
                                 <TextBlock x:Name="MuteStatus" TextWrapping="Wrap" />
                                 <Grid ColumnSpacing="8">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="StandbyLabel" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" />
+                                    <ToggleSwitch x:Name="StandbyEnabled" Grid.Column="1" MinWidth="0" OnContent="" OffContent="" Toggled="OnStandbyOption" />
+                                </Grid>
+                                <NumberBox x:Name="StandbyMinutes" Minimum="1" Maximum="60" Value="5" SpinButtonPlacementMode="Inline" ValueChanged="OnStandbyNumber" />
+                                <NumberBox x:Name="StandbyThreshold" Minimum="-90" Maximum="-40" Value="-65" SpinButtonPlacementMode="Inline" ValueChanged="OnStandbyNumber" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                     <StackPanel Spacing="3">
                                         <TextBlock x:Name="ReducedBufferLabel" FontWeight="SemiBold" TextWrapping="Wrap" />
                                         <TextBlock x:Name="ReducedBufferDescription" TextWrapping="Wrap" Opacity="0.8" />
@@ -281,15 +288,8 @@
                         <TextBlock x:Name="CurrentOutput" Opacity="0.75" />
                         <TextBlock x:Name="OutputName" Style="{StaticResource SubtitleTextBlockStyle}" TextWrapping="Wrap" />
                         <Button x:Name="Play" Click="OnPlay" HorizontalAlignment="Stretch" />
+                        <Button x:Name="Resume" Click="OnResume" HorizontalAlignment="Stretch" Visibility="Collapsed" />
                         <Button x:Name="CancelOperation" Visibility="Collapsed" Click="OnCancelOperation" />
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <StackPanel Spacing="3">
-                                <TextBlock x:Name="AutoReconnectLabel" FontWeight="SemiBold" TextWrapping="Wrap" />
-                                <TextBlock x:Name="AutoReconnectDescription" TextWrapping="Wrap" Opacity="0.8" />
-                            </StackPanel>
-                            <ToggleSwitch x:Name="AutoReconnect" Grid.Column="1" MinWidth="0" OnContent="" OffContent="" Toggled="OnAutoReconnect" />
-                        </Grid>
                         <StackPanel Spacing="8">
                             <Grid ColumnSpacing="8">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
